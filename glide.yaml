@@ -1,0 +1,17 @@
+package: github.com/fabric8io/gosupervise
+import:
+- package: github.com/codegangsta/cli
+  version: f445c894402839580d30de47551cedc152dad814
+- package: github.com/deis/pkg
+  subpackages:
+  - /prettyprint
+- package: github.com/Masterminds/vcs
+- package: github.com/Masterminds/semver
+- package: k8s.io/kubernetes
+  version: v1.1.1
+  subpackages:
+  - /pkg
+- package: gopkg.in/yaml.v2
+- package: github.com/masterzen/winrm
+  version: 54ea5d01478cfc2afccec1504bd0dfcd8c260cfa
+  

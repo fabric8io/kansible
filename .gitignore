@@ -1,0 +1,5 @@
+*.swp
+vendor/
+bin/
+_dist/
+.idea
