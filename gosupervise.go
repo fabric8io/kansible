@@ -10,7 +10,10 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/codegangsta/cli"
+
+	"github.com/fabric8io/gosupervise/ansible"
 	"github.com/fabric8io/gosupervise/log"
+	"strings"
 )
 
 // version is the version of the app.
@@ -42,35 +45,9 @@ running inside Docker inside Kubernetes.
 
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
-			Name:   "home",
-			Value:  "$HOME/.gosupervise",
-			Usage:  "The location of your GoSupervise files",
-			EnvVar: "GOSUPERVISE_HOME",
-		},
-		cli.StringFlag{
-			Name:   "user",
-			Value:  "$GOSUPERVISE_USER",
-			Usage:  "The user to use on the remote SSH connection",
-		},
-		cli.StringFlag{
-			Name:   "privatekey",
-			Value:  "$GOSUPERVISE_PRIVATEKEY",
-			Usage:  "The private key used for SSH",
-		},
-		cli.StringFlag{
-			Name:   "host",
-			Value:  "$GOSUPERVISE_HOST",
-			Usage:  "The host for the remote SSH connection",
-		},
-		cli.StringFlag{
 			Name:   "port",
 			Value:  "22",
 			Usage:  "The port for the remote SSH connection",
-		},
-		cli.StringFlag{
-			Name:   "command",
-			Value:  "$GOSUPERVISE_COMAND",
-			Usage:  "The remote command to invoke over SSH",
 		},
 		cli.BoolFlag{
 			Name:  "debug",
@@ -86,11 +63,47 @@ running inside Docker inside Kubernetes.
 
 	app.Commands = []cli.Command{
 		{
+			Name:    "ansible",
+			Usage:   "Runs the supervisor for a single host in a set of hosts from an Ansible inventory.",
+			Description: `This commmand will begin running the supervisor command on one host from the Ansible inventory.`,
+			ArgsUsage: "[hosts] [command]",
+			Action: runAnsible,
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:   "inventory",
+					Value:  "$GOSUPERVISE_INVENTORY",
+					Usage:  "The location of your Ansible inventory file",
+				},
+			},
+		},
+		{
 			Name:    "run",
 			Usage:   "Runs the supervisor.",
 			Description: `This commmand will begin running the supervisor on an avaiable host.`,
-			ArgsUsage: "",
+			ArgsUsage: "[string]",
 			Action: run,
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:   "user",
+					Value:  "$GOSUPERVISE_USER",
+					Usage:  "The user to use on the remote SSH connection",
+				},
+				cli.StringFlag{
+					Name:   "privatekey",
+					Value:  "$GOSUPERVISE_PRIVATEKEY",
+					Usage:  "The private key used for SSH",
+				},
+				cli.StringFlag{
+					Name:   "host",
+					Value:  "$GOSUPERVISE_HOST",
+					Usage:  "The host for the remote SSH connection",
+				},
+				cli.StringFlag{
+					Name:   "command",
+					Value:  "$GOSUPERVISE_COMAND",
+					Usage:  "The remote command to invoke over SSH",
+				},
+			},
 		},
 	}
 
@@ -104,10 +117,20 @@ running inside Docker inside Kubernetes.
 
 
 func osExpandAndVerify(c *cli.Context, name string) (string, error) {
+	flag := c.String(name)
+	value := os.ExpandEnv(flag)
+	if len(value) == 0 {
+		return "", fmt.Errorf("No parameter supplied for: %s", name)
+	}
+	log.Debug("flag %s is %s", name, value)
+	return value, nil
+}
+
+func osExpandAndVerifyGlobal(c *cli.Context, name string) (string, error) {
 	flag := c.GlobalString(name)
 	value := os.ExpandEnv(flag)
 	if len(value) == 0 {
-        return "", fmt.Errorf("No parameter supplied for: %s", name)
+		return "", fmt.Errorf("No parameter supplied for: %s", name)
 	}
 	log.Debug("flag %s is %s", name, value)
 	return value, nil
@@ -117,22 +140,41 @@ func fail(err error) {
 	log.Die("Failed: %s", err)
 }
 
+func runAnsible(c *cli.Context) {
+	args := c.Args()
+	if len(args) < 2 {
+		log.Die("Expected at least 2 arguments!")
+	}
+	hosts := args[0]
+	command := strings.Join(args[1:], " ")
+
+	log.Info("running command on a host from %s and command `%s`", hosts, command)
+	port, err := osExpandAndVerifyGlobal(c, "port")
+	if err != nil {
+		fail(err)
+	}
+	inventory, err := osExpandAndVerify(c, "inventory")
+	if err != nil {
+		fail(err)
+	}
+	hostEntry, err := ansible.ChooseHostAndPrivateKey(inventory, hosts)
+	if err != nil {
+		fail(err)
+	}
+	host := hostEntry.Host
+	privatekey := hostEntry.PrivateKey
+	user := hostEntry.User
+	hostPort := host + ":" + port
+	err = remoteSshCommand(user, privatekey, hostPort, command)
+	if err != nil {
+		log.Err("Failed: %v", err)
+	}
+}
+
 func run(c *cli.Context) {
 	log.Info("Running GoSupervise!")
 
-	user, err := osExpandAndVerify(c, "user")
-	if err != nil {
-		fail(err)
-	}
-	privatekey, err := osExpandAndVerify(c, "privatekey")
-	if err != nil {
-		fail(err)
-	}
-	host, err := osExpandAndVerify(c, "host")
-	if err != nil {
-		fail(err)
-	}
-	port, err := osExpandAndVerify(c, "port")
+	port, err := osExpandAndVerifyGlobal(c, "port")
 	if err != nil {
 		fail(err)
 	}
@@ -140,8 +182,19 @@ func run(c *cli.Context) {
 	if err != nil {
 		fail(err)
 	}
+	host, err := osExpandAndVerify(c, "host")
+	if err != nil {
+		fail(err)
+	}
+	privatekey, err := osExpandAndVerify(c, "privatekey")
+	if err != nil {
+		fail(err)
+	}
+	user, err := osExpandAndVerify(c, "user")
+	if err != nil {
+		fail(err)
+	}
 	hostPort := host + ":" + port
-
 	err = remoteSshCommand(user, privatekey, hostPort, command)
 	if err != nil {
 		log.Err("Failed: %v", err)
@@ -216,3 +269,4 @@ func PublicKeyFile(file string) ssh.AuthMethod {
 	}
 	return ssh.PublicKeys(key)
 }
+
