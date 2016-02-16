@@ -13,6 +13,8 @@ import:
   - /pkg/client
   - /pkg/cmdutil
 - package: gopkg.in/yaml.v2
+- package: github.com/nu7hatch/gouuid
+- package: github.com/masterzen/xmlpath
+- package: github.com/masterzen/simplexml/dom
 - package: github.com/masterzen/winrm
   version: 54ea5d01478cfc2afccec1504bd0dfcd8c260cfa
-  
