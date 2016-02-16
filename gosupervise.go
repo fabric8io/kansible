@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 
@@ -13,7 +14,8 @@ import (
 
 	"github.com/fabric8io/gosupervise/ansible"
 	"github.com/fabric8io/gosupervise/log"
-	"strings"
+
+	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 )
 
 // version is the version of the app.
@@ -73,6 +75,11 @@ running inside Docker inside Kubernetes.
 					Name:   "inventory",
 					Value:  "$GOSUPERVISE_INVENTORY",
 					Usage:  "The location of your Ansible inventory file",
+				},
+				cli.StringFlag{
+					Name:   "rc",
+					Value:  "$GOSUPERVISE_RC",
+					Usage:  "The name of the ReplicationController used to keep track of which pod owns which host",
 				},
 			},
 		},
@@ -149,6 +156,16 @@ func runAnsible(c *cli.Context) {
 	command := strings.Join(args[1:], " ")
 
 	log.Info("running command on a host from %s and command `%s`", hosts, command)
+
+	f := cmdutil.NewFactory(nil)
+	kubeclient, _ := f.Client()
+	ns, _, _ := f.DefaultNamespace()
+
+	rcName, err := osExpandAndVerify(c, "rc")
+	if err != nil {
+		fail(err)
+	}
+
 	port, err := osExpandAndVerifyGlobal(c, "port")
 	if err != nil {
 		fail(err)
@@ -157,7 +174,7 @@ func runAnsible(c *cli.Context) {
 	if err != nil {
 		fail(err)
 	}
-	hostEntry, err := ansible.ChooseHostAndPrivateKey(inventory, hosts)
+	hostEntry, err := ansible.ChooseHostAndPrivateKey(inventory, hosts, kubeclient, ns, rcName)
 	if err != nil {
 		fail(err)
 	}
