@@ -17,7 +17,16 @@ import (
 
 const (
 	AnsbileHostPodAnnotationPrefix = "pod.ansible.fabric8.io/"
+
+	EnvHosts = "GOSUPERVISE_HOSTS"
+	EnvCommand = "GOSUPERVISE_COMMAND"
+
+	PlaybookVolumeMount = "/playbook"
+
+	gitUrlPrefix = "url = "
+	gitConfig = ".git/config"
 )
+
 
 type HostEntry struct {
 	Name       string
@@ -156,16 +165,21 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 	return nil, fmt.Errorf("Could not find any hosts for inventory file %s and hosts %s", inventoryFile, hosts)
 }
 
-const (
-	EnvHosts = "GOSUPERVISE_HOSTS"
-	EnvCommand = "GOSUPERVISE_COMMAND"
-)
 func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns string, rcFile string) (*api.ReplicationController, error) {
 	rcConfig, err := k8s.ReadReplicationControllerFromFile(rcFile)
 	if err != nil {
 		return nil, err
 	}
 
+	gitUrl, err := findGitUrl()
+	if err != nil {
+		return nil, err
+	}
+	if len(gitUrl) == 0 {
+		return nil, fmt.Errorf("Could not find git URL in git configu file %s", gitConfig)
+	}
+
+	podSpec := k8s.GetOrCreatePodSpec(rcConfig)
 	container := k8s.GetFirstContainerOrCreate(rcConfig)
 	if len(container.Image) == 0 {
 		container.Image = "fabric8/gosupervise"
@@ -181,12 +195,17 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 	if len(command) == 0 {
 		return nil, fmt.Errorf("No environemnt variable value defined for %s in ReplicationController YAML file %s", EnvCommand, rcFile)
 	}
+	volumeName := "playbook-volume"
+	k8s.EnsurePodSpecHasGitVolume(podSpec, volumeName, gitUrl, "master")
+	k8s.EnsureContainerHasGitVolumeMount(container, volumeName, PlaybookVolumeMount)
 
 	hostEntries, err := LoadHostEntries(inventoryFile, hosts)
 	if err != nil {
 		return nil, err
 	}
-	log.Info("Found %d host entries", len(hostEntries))
+	log.Info("Found %d host entries in the Ansible inventory for %s", len(hostEntries), hosts)
+	log.Info("Using git URL %s", gitUrl)
+
 	rcName := rcConfig.ObjectMeta.Name
 	isUpdate := true
 	rc, err := c.ReplicationControllers(ns).Get(rcName)
@@ -230,6 +249,26 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 	return rc, nil
 }
 
+func findGitUrl() (string, error) {
+	file, err := os.Open(gitConfig)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		text := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(text, gitUrlPrefix) {
+			return text[len(gitUrlPrefix):], nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return "", nil
+
+}
 
 
 func removeHostEntry(hostEntries []HostEntry, name string) []HostEntry {

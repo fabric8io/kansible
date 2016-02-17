@@ -49,6 +49,16 @@ func PodIsRunning(pods *api.PodList, podName string) bool {
 // GetFirstContainerOrCreate returns the first Container in the PodSpec for this ReplicationController
 // lazily creating structures as required
 func GetFirstContainerOrCreate(rc *api.ReplicationController) *api.Container {
+	podSpec := GetOrCreatePodSpec(rc)
+	if len(podSpec.Containers) == 0 {
+		podSpec.Containers[0] = api.Container{}
+	}
+	return &podSpec.Containers[0];
+}
+
+// GetFirstContainerOrCreate returns the first Container in the PodSpec for this ReplicationController
+// lazily creating structures as required
+func GetOrCreatePodSpec(rc *api.ReplicationController) *api.PodSpec {
 	spec := &rc.Spec
 	if spec == nil {
 		rc.Spec = api.ReplicationControllerSpec{}
@@ -64,10 +74,7 @@ func GetFirstContainerOrCreate(rc *api.ReplicationController) *api.Container {
 		template.Spec = api.PodSpec{}
 		podSpec = &template.Spec
 	}
-	if len(podSpec.Containers) == 0 {
-		podSpec.Containers[0] = api.Container{}
-	}
-	return &podSpec.Containers[0];
+	return podSpec
 }
 
 // GetContainerEnvVar returns the environment variable value for the given name in the Container
@@ -95,6 +102,45 @@ func EnsureContainerHasEnvVar(container *api.Container, name string, value strin
 	container.Env = append(container.Env, api.EnvVar{
 		Name: name,
 		Value: value,
+	})
+	return false
+}
+
+// EnsureContainerHasGitVolumeMount ensures that there is a volume mount of the given name with the given values
+// Returns true if there was already a volume mount
+func EnsureContainerHasGitVolumeMount(container *api.Container, name string, mountPath string) bool {
+	for _, vm := range container.VolumeMounts {
+		if vm.Name == name {
+			vm.MountPath = mountPath
+			return true
+		}
+	}
+	container.VolumeMounts = append(container.VolumeMounts, api.VolumeMount{
+		Name: name,
+		MountPath: mountPath,
+	})
+	return false
+}
+
+// EnsureHasGitVolume ensures that there is a volume with the given name and git repo and revision
+func EnsurePodSpecHasGitVolume(podSpec *api.PodSpec, name string, gitRepo string, gitRevision string) bool {
+	for _, vm := range podSpec.Volumes {
+		if vm.Name == name {
+			vm.GitRepo = &api.GitRepoVolumeSource{
+				Repository: gitRepo,
+				Revision: gitRevision,
+			}
+			return true
+		}
+	}
+	podSpec.Volumes = append(podSpec.Volumes, api.Volume{
+		Name: name,
+		VolumeSource: api.VolumeSource{
+			GitRepo: &api.GitRepoVolumeSource{
+				Repository: gitRepo,
+				Revision: gitRevision,
+			},
+		},
 	})
 	return false
 }
