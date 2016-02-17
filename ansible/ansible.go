@@ -94,7 +94,7 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 				return nil, err
 			}
 
-			metadata := rc.ObjectMeta
+			metadata := &rc.ObjectMeta
 			resourceVersion := metadata.ResourceVersion
 			if metadata.Annotations == nil {
 				metadata.Annotations = make(map[string]string)
@@ -143,12 +143,6 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 			// lets try pick this pod
 			annotations[AnsbileHostPodAnnotationPrefix + hostName] = thisPodName
 
-			log.Info("Now printing annotations....")
-			for k, v := range metadata.Annotations {
-				log.Info("Annotation %s = %s", k, v)
-			}
-			log.Info("...printed!")
-
 			_, err = c.ReplicationControllers(ns).Update(rc)
 			if err != nil {
 				log.Info("Failed to update the RC, could be concurrent update failure: %s", err)
@@ -162,11 +156,32 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 	return nil, fmt.Errorf("Could not find any hosts for inventory file %s and hosts %s", inventoryFile, hosts)
 }
 
+const (
+	EnvHosts = "GOSUPERVISE_HOSTS"
+	EnvCommand = "GOSUPERVISE_COMMAND"
+)
 func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns string, rcFile string) (*api.ReplicationController, error) {
 	rcConfig, err := k8s.ReadReplicationControllerFromFile(rcFile)
 	if err != nil {
 		return nil, err
 	}
+
+	container := k8s.GetFirstContainerOrCreate(rcConfig)
+	if len(container.Image) == 0 {
+		container.Image = "fabric8/gosupervise"
+	}
+	if len(container.Name) == 0 {
+		container.Name = "gosupervise"
+	}
+	if len(container.ImagePullPolicy) == 0 {
+		container.ImagePullPolicy = "IfNotPresent"
+	}
+	k8s.EnsureContainerHasEnvVar(container, EnvHosts, hosts)
+	command := k8s.GetContainerEnvVar(container, EnvCommand)
+	if len(command) == 0 {
+		return nil, fmt.Errorf("No environemnt variable value defined for %s in ReplicationController YAML file %s", EnvCommand, rcFile)
+	}
+
 	hostEntries, err := LoadHostEntries(inventoryFile, hosts)
 	if err != nil {
 		return nil, err
@@ -195,7 +210,7 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 	metadata := rc.ObjectMeta
 	resourceVersion := metadata.ResourceVersion
 	annotations := metadata.Annotations
-	rcSpec := rc.Spec
+	rcSpec := &rc.Spec
 	rcSpec.Replicas = len(hostEntries)
 
 	log.Info("found RC with name %s and version %s and replicas %d", rcName, resourceVersion, rcSpec.Replicas)

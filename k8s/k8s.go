@@ -45,3 +45,56 @@ func PodIsRunning(pods *api.PodList, podName string) bool {
 	}
 	return false
 }
+
+// GetFirstContainerOrCreate returns the first Container in the PodSpec for this ReplicationController
+// lazily creating structures as required
+func GetFirstContainerOrCreate(rc *api.ReplicationController) *api.Container {
+	spec := &rc.Spec
+	if spec == nil {
+		rc.Spec = api.ReplicationControllerSpec{}
+		spec = &rc.Spec
+	}
+	template := spec.Template
+	if template == nil {
+		spec.Template = &api.PodTemplateSpec{}
+		template = spec.Template
+	}
+	podSpec := &template.Spec
+	if podSpec == nil {
+		template.Spec = api.PodSpec{}
+		podSpec = &template.Spec
+	}
+	if len(podSpec.Containers) == 0 {
+		podSpec.Containers[0] = api.Container{}
+	}
+	return &podSpec.Containers[0];
+}
+
+// GetContainerEnvVar returns the environment variable value for the given name in the Container
+func GetContainerEnvVar(container *api.Container, name string) string {
+	if container != nil {
+		for _, env := range container.Env {
+			if env.Name == name {
+				return env.Value
+			}
+		}
+	}
+	return ""
+}
+
+// EnsureContainerHasEnvVar if there is an existing EnvVar for the given name then lets update it
+// with the given value otherwise lets add a new entry.
+// Returns true if there was already an existing environment variable
+func EnsureContainerHasEnvVar(container *api.Container, name string, value string) bool {
+	for _, env := range container.Env {
+		if env.Name == name {
+			env.Value = value
+			return true
+		}
+	}
+	container.Env = append(container.Env, api.EnvVar{
+		Name: name,
+		Value: value,
+	})
+	return false
+}
