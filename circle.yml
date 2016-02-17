@@ -11,6 +11,7 @@ dependencies:
     - export GO15VENDOREXPERIMENT=1
 
   override:
+    - go version
     - make bootstrap build test
 
 test:
