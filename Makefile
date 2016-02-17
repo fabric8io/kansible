@@ -4,7 +4,7 @@ endif
 
 BIN_DIR := bin
 DIST_DIR := _dist
-GO_PACKAGES := log ansible
+GO_PACKAGES := ansible k8s log
 MAIN_GO := gosupervise.go
 HELM_BIN := $(BIN_DIR)/gosupervise
 

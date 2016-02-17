@@ -12,6 +12,7 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 
 	"github.com/fabric8io/gosupervise/log"
+	"github.com/fabric8io/gosupervise/k8s"
 )
 
 const (
@@ -25,9 +26,7 @@ type HostEntry struct {
 	PrivateKey string
 }
 
-// ChooseHostAndPrivateKey parses the given Ansbile inventory file for the hosts
-// and chooses a single host inside it, returning the host name and the private key
-func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Client, ns string, rcName string) (*HostEntry, error) {
+func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, error) {
 	file, err := os.Open(inventoryFile)
 	if err != nil {
 		return nil, err
@@ -58,8 +57,17 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
+	return hostEntries, nil
+}
 
-	log.Info("Found %v host entries", len(hostEntries))
+// ChooseHostAndPrivateKey parses the given Ansbile inventory file for the hosts
+// and chooses a single host inside it, returning the host name and the private key
+func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Client, ns string, rcName string) (*HostEntry, error) {
+	hostEntries, err := LoadHostEntries(inventoryFile, hosts)
+	if err != nil {
+		return nil, err
+	}
+	log.Info("Found %d host entries", len(hostEntries))
 
 	// lets pick a random entry
 	if len(hostEntries) > 0 {
@@ -88,15 +96,18 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 
 			metadata := rc.ObjectMeta
 			resourceVersion := metadata.ResourceVersion
+			if metadata.Annotations == nil {
+				metadata.Annotations = make(map[string]string)
+			}
 			annotations := metadata.Annotations
-			log.Info("found RC with name %s and version %s", rcName, resourceVersion)
+			log.Info("found RC with name %s.%s and version %s", ns, rcName, resourceVersion)
 
 			filteredHostEntries := hostEntries
 			for annKey, podName := range annotations {
 				if strings.HasPrefix(annKey, AnsbileHostPodAnnotationPrefix) {
 					hostName := annKey[len(AnsbileHostPodAnnotationPrefix):]
 
-					if (podIsRunning(pods, podName)) {
+					if (k8s.PodIsRunning(pods, podName)) {
 						if podName != thisPodName {
 							log.Info("Pod %s podName has already claimed host %s", podName, hostName)
 							filteredHostEntries = removeHostEntry(filteredHostEntries, hostName)
@@ -132,6 +143,12 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 			// lets try pick this pod
 			annotations[AnsbileHostPodAnnotationPrefix + hostName] = thisPodName
 
+			log.Info("Now printing annotations....")
+			for k, v := range metadata.Annotations {
+				log.Info("Annotation %s = %s", k, v)
+			}
+			log.Info("...printed!")
+
 			_, err = c.ReplicationControllers(ns).Update(rc)
 			if err != nil {
 				log.Info("Failed to update the RC, could be concurrent update failure: %s", err)
@@ -145,6 +162,61 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 	return nil, fmt.Errorf("Could not find any hosts for inventory file %s and hosts %s", inventoryFile, hosts)
 }
 
+func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns string, rcFile string) (*api.ReplicationController, error) {
+	rcConfig, err := k8s.ReadReplicationControllerFromFile(rcFile)
+	if err != nil {
+		return nil, err
+	}
+	hostEntries, err := LoadHostEntries(inventoryFile, hosts)
+	if err != nil {
+		return nil, err
+	}
+	log.Info("Found %d host entries", len(hostEntries))
+	rcName := rcConfig.ObjectMeta.Name
+	isUpdate := true
+	rc, err := c.ReplicationControllers(ns).Get(rcName)
+	if err != nil {
+		isUpdate = false
+		rc = &api.ReplicationController{
+			ObjectMeta: api.ObjectMeta{
+				Namespace: ns,
+				Name: rcName,
+			},
+		}
+	}
+	pods, err := c.Pods(ns).List(nil, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// merge the RC configuration to allow configuration
+	rc.Spec = rcConfig.Spec
+
+	metadata := rc.ObjectMeta
+	resourceVersion := metadata.ResourceVersion
+	annotations := metadata.Annotations
+	rcSpec := rc.Spec
+	rcSpec.Replicas = len(hostEntries)
+
+	log.Info("found RC with name %s and version %s and replicas %d", rcName, resourceVersion, rcSpec.Replicas)
+
+	deletePodsForOldHosts(c, ns, annotations, pods, hostEntries)
+
+	replicationController := c.ReplicationControllers(ns)
+	if isUpdate {
+		_, err = replicationController.Update(rc)
+	} else {
+		_, err = replicationController.Create(rc)
+	}
+	if err != nil {
+		log.Info("Failed to update the RC, could be concurrent update failure: %s", err)
+		return nil, err
+	}
+	return rc, nil
+}
+
+
+
 func removeHostEntry(hostEntries []HostEntry, name string) []HostEntry {
 	for i, entry := range hostEntries {
 		if entry.Name == name {
@@ -155,24 +227,39 @@ func removeHostEntry(hostEntries []HostEntry, name string) []HostEntry {
 			}
 		}
 	}
-	log.Info("Did not find a host entry with name %s", name)
+	log.Warn("Did not find a host entry with name %s", name)
 	return hostEntries
 }
 
-
-func podIsRunning(pods *api.PodList, podName string) bool {
-	for _, pod := range pods.Items {
-		if pod.ObjectMeta.Name == podName {
-			return true
+func getHostEntryByName(hostEntries []HostEntry, name string) *HostEntry {
+	for _, entry := range hostEntries {
+		if entry.Name == name {
+			return &entry
 		}
 	}
-	return false
+	return nil
+}
+
+
+func deletePodsForOldHosts(c *client.Client, ns string, annotations map[string]string, pods *api.PodList, hostEntries []HostEntry) {
+	for annKey, podName := range annotations {
+		if strings.HasPrefix(annKey, AnsbileHostPodAnnotationPrefix) {
+			hostName := annKey[len(AnsbileHostPodAnnotationPrefix):]
+			if (k8s.PodIsRunning(pods, podName)) {
+				hostEntry := getHostEntryByName(hostEntries, hostName)
+				if hostEntry == nil {
+					log.Info("Deleting pod %s as there is no longer an Ansible inventory host called %s", podName, hostName)
+					c.Pods(ns).Delete(podName, nil)
+				}
+			}
+		}
+	}
 }
 
 
 func random(min, max int) int {
-    rand.Seed(time.Now().Unix())
-    return rand.Intn(max - min) + min
+	rand.Seed(time.Now().Unix())
+	return rand.Intn(max - min) + min
 }
 
 func parseHostEntry(text string) *HostEntry {

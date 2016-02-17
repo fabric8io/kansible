@@ -14,6 +14,7 @@ import (
 
 	"github.com/fabric8io/gosupervise/ansible"
 	"github.com/fabric8io/gosupervise/log"
+	"github.com/fabric8io/gosupervise/k8s"
 
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 )
@@ -65,27 +66,46 @@ running inside Docker inside Kubernetes.
 
 	app.Commands = []cli.Command{
 		{
-			Name:    "ansible",
-			Usage:   "Runs the supervisor for a single host in a set of hosts from an Ansible inventory.",
+			Name:    "pod",
+			Usage:   "Runs the supervisor pod for a single host in a set of hosts from an Ansible inventory.",
 			Description: `This commmand will begin running the supervisor command on one host from the Ansible inventory.`,
 			ArgsUsage: "[hosts] [command]",
-			Action: runAnsible,
+			Action: runAnsiblePod,
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:   "inventory",
-					Value:  "$GOSUPERVISE_INVENTORY",
+					Value:  "inventory",
 					Usage:  "The location of your Ansible inventory file",
 				},
 				cli.StringFlag{
 					Name:   "rc",
-					Value:  "$GOSUPERVISE_RC",
-					Usage:  "The name of the ReplicationController used to keep track of which pod owns which host",
+					Value:  "rc.yml",
+					Usage:  "The YAML file of the ReplicationController for the supervisors",
+				},
+			},
+		},
+		{
+			Name:    "rc",
+			Usage:   "Applies ReplicationController for the supervisors for some hosts in an Ansible inventory.",
+			Description: `This commmand will analyse the hosts in an Ansible inventory and creates or updates the ReplicationController for its supervisors.`,
+			ArgsUsage: "[hosts] [command]",
+			Action: applyAnsibleRC,
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:   "inventory",
+					Value:  "inventory",
+					Usage:  "The location of your Ansible inventory file",
+				},
+				cli.StringFlag{
+					Name:   "rc",
+					Value:  "rc.yml",
+					Usage:  "The YAML file of the ReplicationController for the supervisors",
 				},
 			},
 		},
 		{
 			Name:    "run",
-			Usage:   "Runs the supervisor.",
+			Usage:   "Runs a supervisor command on a given host as a user without using Ansible.",
 			Description: `This commmand will begin running the supervisor on an avaiable host.`,
 			ArgsUsage: "[string]",
 			Action: run,
@@ -147,7 +167,7 @@ func fail(err error) {
 	log.Die("Failed: %s", err)
 }
 
-func runAnsible(c *cli.Context) {
+func runAnsiblePod(c *cli.Context) {
 	args := c.Args()
 	if len(args) < 2 {
 		log.Die("Expected at least 2 arguments!")
@@ -161,7 +181,7 @@ func runAnsible(c *cli.Context) {
 	kubeclient, _ := f.Client()
 	ns, _, _ := f.DefaultNamespace()
 
-	rcName, err := osExpandAndVerify(c, "rc")
+	rcFile, err := osExpandAndVerify(c, "rc")
 	if err != nil {
 		fail(err)
 	}
@@ -174,6 +194,11 @@ func runAnsible(c *cli.Context) {
 	if err != nil {
 		fail(err)
 	}
+	rc, err := k8s.ReadReplicationControllerFromFile(rcFile)
+	if err != nil {
+		fail(err)
+	}
+	rcName := rc.ObjectMeta.Name
 	hostEntry, err := ansible.ChooseHostAndPrivateKey(inventory, hosts, kubeclient, ns, rcName)
 	if err != nil {
 		fail(err)
@@ -185,6 +210,32 @@ func runAnsible(c *cli.Context) {
 	err = remoteSshCommand(user, privatekey, hostPort, command)
 	if err != nil {
 		log.Err("Failed: %v", err)
+	}
+}
+
+func applyAnsibleRC(c *cli.Context) {
+	args := c.Args()
+	if len(args) < 1 {
+		log.Die("Expected an argument!")
+	}
+	hosts := args[0]
+
+	f := cmdutil.NewFactory(nil)
+	kubeclient, _ := f.Client()
+	ns, _, _ := f.DefaultNamespace()
+
+	rcName, err := osExpandAndVerify(c, "rc")
+	if err != nil {
+		fail(err)
+	}
+
+	inventory, err := osExpandAndVerify(c, "inventory")
+	if err != nil {
+		fail(err)
+	}
+	_, err = ansible.UpdateAnsibleRC(inventory, hosts, kubeclient, ns, rcName)
+	if err != nil {
+		fail(err)
 	}
 }
 

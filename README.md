@@ -53,7 +53,7 @@ type the following to setup the VMs and provision things with Ansible
 Now to run the supervisor on one of the hosts run:
     
 ```    
-    gosupervise ansible --inventory inventory --rc fabric8 appservers /opt/cdi-camel-2.2.98-SNAPSHOT-app/bin/run.sh
+    gosupervise pod appservers /opt/cdi-camel-2.2.98-SNAPSHOT-app/bin/run.sh
 ```      
   
 #### for [fabric8-ansible-spring-boot](https://github.com/fabric8io/fabric8-ansible-spring-boot)
@@ -70,7 +70,7 @@ type the following to setup the VMs and provision things with Ansible
 Now to run the supervisor on one of the hosts run:
     
 ```    
-    gosupervise ansible --inventory inventory --rc fabric8 appservers /opt/springboot-camel-2.2.98-SNAPSHOT
+    gosupervise pod appservers /opt/springboot-camel-2.2.98-SNAPSHOT
 ```      
 
 ### Checking the runtime status of the supervisors
