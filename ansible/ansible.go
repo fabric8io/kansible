@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	AnsbileHostPodAnnotationPrefix = "pod.ansible.fabric8.io/"
+	AnsibleHostPodAnnotationPrefix = "pod.ansible.fabric8.io/"
 
 	EnvHosts = "GOSUPERVISE_HOSTS"
 	EnvCommand = "GOSUPERVISE_COMMAND"
@@ -113,8 +113,8 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 
 			filteredHostEntries := hostEntries
 			for annKey, podName := range annotations {
-				if strings.HasPrefix(annKey, AnsbileHostPodAnnotationPrefix) {
-					hostName := annKey[len(AnsbileHostPodAnnotationPrefix):]
+				if strings.HasPrefix(annKey, AnsibleHostPodAnnotationPrefix) {
+					hostName := annKey[len(AnsibleHostPodAnnotationPrefix):]
 
 					if (k8s.PodIsRunning(pods, podName)) {
 						if podName != thisPodName {
@@ -150,7 +150,7 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 			}
 
 			// lets try pick this pod
-			annotations[AnsbileHostPodAnnotationPrefix + hostName] = thisPodName
+			annotations[AnsibleHostPodAnnotationPrefix + hostName] = thisPodName
 
 			_, err = c.ReplicationControllers(ns).Update(rc)
 			if err != nil {
@@ -297,8 +297,8 @@ func getHostEntryByName(hostEntries []HostEntry, name string) *HostEntry {
 
 func deletePodsForOldHosts(c *client.Client, ns string, annotations map[string]string, pods *api.PodList, hostEntries []HostEntry) {
 	for annKey, podName := range annotations {
-		if strings.HasPrefix(annKey, AnsbileHostPodAnnotationPrefix) {
-			hostName := annKey[len(AnsbileHostPodAnnotationPrefix):]
+		if strings.HasPrefix(annKey, AnsibleHostPodAnnotationPrefix) {
+			hostName := annKey[len(AnsibleHostPodAnnotationPrefix):]
 			if (k8s.PodIsRunning(pods, podName)) {
 				hostEntry := getHostEntryByName(hostEntries, hostName)
 				if hostEntry == nil {

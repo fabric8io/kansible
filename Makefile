@@ -6,7 +6,7 @@ BIN_DIR := bin
 DIST_DIR := _dist
 GO_PACKAGES := ansible k8s log
 MAIN_GO := gosupervise.go
-HELM_BIN := $(BIN_DIR)/gosupervise
+GOSUPERVISE_BIN := $(BIN_DIR)/gosupervise
 
 VERSION_PREFIX := $(shell git describe --tags --abbrev=0 2>/dev/null)
 
@@ -23,7 +23,7 @@ ifndef VERSION
 endif
 
 build: $(MAIN_GO)
-	go build -o $(HELM_BIN) -ldflags "-X main.version=${VERSION}" $<
+	go build -o $(GOSUPERVISE_BIN) -ldflags "-X main.version=${VERSION}" $<
 
 bootstrap:
 	go get -u github.com/golang/lint/golint github.com/mitchellh/gox
@@ -46,7 +46,7 @@ dist: build-all
 
 install: build
 	install -d ${DESTDIR}/usr/local/bin/
-	install -m 755 $(HELM_BIN) ${DESTDIR}/usr/local/bin/gosupervise
+	install -m 755 $(GOSUPERVISE_BIN) ${DESTDIR}/usr/local/bin/gosupervise
 
 prep-bintray-json:
 # TRAVIS_TAG is set to the tag name if the build is a tag
