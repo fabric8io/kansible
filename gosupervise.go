@@ -328,7 +328,3 @@ func run(c *cli.Context) {
 		log.Err("Failed: %v", err)
 	}
 }
-
-type Executor interface {
-	RemoteSshCommand(user string, privateKey string, hostPort string, cmd string) error
-}

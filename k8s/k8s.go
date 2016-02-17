@@ -56,7 +56,7 @@ func GetFirstContainerOrCreate(rc *api.ReplicationController) *api.Container {
 	return &podSpec.Containers[0];
 }
 
-// GetFirstContainerOrCreate returns the first Container in the PodSpec for this ReplicationController
+// GetOrCreatePodSpec returns the PodSpec for this ReplicationController
 // lazily creating structures as required
 func GetOrCreatePodSpec(rc *api.ReplicationController) *api.PodSpec {
 	spec := &rc.Spec
@@ -122,7 +122,7 @@ func EnsureContainerHasGitVolumeMount(container *api.Container, name string, mou
 	return false
 }
 
-// EnsureHasGitVolume ensures that there is a volume with the given name and git repo and revision
+// EnsurePodSpecHasGitVolume ensures that there is a volume with the given name and git repo and revision
 func EnsurePodSpecHasGitVolume(podSpec *api.PodSpec, name string, gitRepo string, gitRevision string) bool {
 	for _, vm := range podSpec.Volumes {
 		if vm.Name == name {

@@ -16,17 +16,23 @@ import (
 )
 
 const (
+	// AnsibleHostPodAnnotationPrefix is the annotation prefix used on the RC to associate a host name with a pod name
 	AnsibleHostPodAnnotationPrefix = "pod.ansible.fabric8.io/"
 
+	// EnvHosts is the environment variable on a pod for specifying the Ansible hosts in the inventory
 	EnvHosts = "GOSUPERVISE_HOSTS"
+
+	// EnvCommand is the environment variable on a pod for specifying the command to run on each host
 	EnvCommand = "GOSUPERVISE_COMMAND"
 
+	// PlaybookVolumeMount is the volume mount point where the playbook is assumed to be in the supervisor pod
 	PlaybookVolumeMount = "/playbook"
 
-	gitUrlPrefix = "url = "
+	gitURLPrefix = "url = "
 	gitConfig = ".git/config"
 )
 
+// HostEntry represents a single host entry in an Ansible inventory
 type HostEntry struct {
 	Name       string
 	Host       string
@@ -37,6 +43,7 @@ type HostEntry struct {
 	Password   string
 }
 
+// LoadHostEntries loads the Ansible inventory for a given hosts string value
 func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, error) {
 	file, err := os.Open(inventoryFile)
 	if err != nil {
@@ -176,17 +183,19 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 	return nil, fmt.Errorf("Could not find any hosts for inventory file %s and hosts %s", inventoryFile, hosts)
 }
 
+// UpdateAnsibleRC reads the Ansible inventory and the RC for the supervisor and updates it in Kubernetes
+// along with removing any remaining pods which are for old hosts
 func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns string, rcFile string) (*api.ReplicationController, error) {
 	rcConfig, err := k8s.ReadReplicationControllerFromFile(rcFile)
 	if err != nil {
 		return nil, err
 	}
 
-	gitUrl, err := findGitUrl()
+	gitURL, err := findGitURL()
 	if err != nil {
 		return nil, err
 	}
-	if len(gitUrl) == 0 {
+	if len(gitURL) == 0 {
 		return nil, fmt.Errorf("Could not find git URL in git configu file %s", gitConfig)
 	}
 
@@ -207,7 +216,7 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 		return nil, fmt.Errorf("No environemnt variable value defined for %s in ReplicationController YAML file %s", EnvCommand, rcFile)
 	}
 	volumeName := "playbook-volume"
-	k8s.EnsurePodSpecHasGitVolume(podSpec, volumeName, gitUrl, "master")
+	k8s.EnsurePodSpecHasGitVolume(podSpec, volumeName, gitURL, "master")
 	k8s.EnsureContainerHasGitVolumeMount(container, volumeName, PlaybookVolumeMount)
 
 	hostEntries, err := LoadHostEntries(inventoryFile, hosts)
@@ -215,7 +224,7 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 		return nil, err
 	}
 	log.Info("Found %d host entries in the Ansible inventory for %s", len(hostEntries), hosts)
-	log.Info("Using git URL %s", gitUrl)
+	log.Info("Using git URL %s", gitURL)
 
 	rcName := rcConfig.ObjectMeta.Name
 	isUpdate := true
@@ -260,7 +269,7 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 	return rc, nil
 }
 
-func findGitUrl() (string, error) {
+func findGitURL() (string, error) {
 	file, err := os.Open(gitConfig)
 	if err != nil {
 		return "", err
@@ -270,15 +279,14 @@ func findGitUrl() (string, error) {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		text := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(text, gitUrlPrefix) {
-			return text[len(gitUrlPrefix):], nil
+		if strings.HasPrefix(text, gitURLPrefix) {
+			return text[len(gitURLPrefix):], nil
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return "", err
 	}
 	return "", nil
-
 }
 
 
@@ -287,9 +295,8 @@ func removeHostEntry(hostEntries []HostEntry, name string) []HostEntry {
 		if entry.Name == name {
 			if i < len(hostEntries) - 1 {
 				return append(hostEntries[:i], hostEntries[i + 1:]...)
-			} else {
-				return hostEntries[:i]
 			}
+			return hostEntries[:i]
 		}
 	}
 	log.Warn("Did not find a host entry with name %s", name)
