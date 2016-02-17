@@ -1,3 +1,4 @@
+#!/usr/bin/groovy
 node{
   stage 'canary release'
   git 'https://github.com/fabric8io/gosupervise.git'
