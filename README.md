@@ -41,16 +41,12 @@ gosupervise pod somehosts somecommand
   
 To try out running one of the example Ansible provisioned apps try the following:
 
-* add the `$PWD/bin` folder to your `$PATH`
-* run the following command:
+* add the `$PWD/bin` folder to your `$PATH` so that you can type in `gosupervise` on the command line
 
-```
-    export HOSTNAME=supervisor-znuj5
-```
-    
-which gives the current shell a pod name. 
+The following examples use these files:
 
-Note that the following examples cheat a little in that they use the Replication Controller called `fabric8` for now to store the ownership of pods -> hosts. When we create the RC for the supervisors then we should be using that RC instead ;)
+* `inventory` is the Ansible inventory file used unless you specify the `--inventory` command line option
+* `rc.yml` is the Replication Controller configuration used for the supervisor pods unless you specify the `--rc` command line option
 
 ### [fabric8-ansible-hawtapp](https://github.com/fabric8io/fabric8-ansible-hawtapp)
 
@@ -104,6 +100,19 @@ The output is of the format:
 ```
 
 Where the output is of the form ` pod.ansible.fabric8.io/$HOSTNAME: $PODNAME`
+
+### Simulating multiple pods
+
+When working on the code outside of Kubernetes its useful to simulate running pods. To do this just set the `HOSTNAME` environment variable to the pod name you wish to use:
+
+```
+    export HOSTNAME=supervisor-znuj5
+```
+
+This lets you pretend to be different pods from the command line when trying it out locally. e.g. run the `gosupervise pod ...` command in 2 shells as different pods.
+
+Note that supervise pod checks all pods are still running and un-allocates dead pods; so you might want to cheat and use an existing pod name for your `HOSTNAME` to test out how multiple pods grab hosts etc.
+
 
  
 ## Building
