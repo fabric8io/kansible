@@ -2,32 +2,25 @@
 
 This process supervises a running process on a remote machine.
 
-## Building
-
-* install [glide](https://github.com/Masterminds/glide#install)
-* prepare the `vendor` folder by typing
-
-```
-    make bootstrap
-    export GO15VENDOREXPERIMENT=1
-```
-    
-* then to build the binary
-    
-```
-    make build
-```
-    
-* you can then run it via
-
-```    
-    ./bin/gosupervise
-```
-
 ### Configuring gosupervise
 
-You can switch between using SSH (the default) or WinRM (for Windows) either by specifying the `--winrm` command flag 
+The best way to configure if you want to connect via SSH for unix machines or WinRM for windows machines is via the Ansible Inventory.
 
+By default SSH is used on port 22 unless you specify `ansible_port` in the inventory or specify `--port` on the command line.
+
+You can configure Windows machines using the `winrm=true` property in the inventory:
+
+
+```yaml
+[winboxes]
+windows1 ansible_ssh_host=localhost ansible_port=5985 ansible_ssh_user=foo ansible_ssh_pass=somepasswd! winrm=true
+
+[unixes]
+app1 ansible_ssh_host=10.10.3.20 ansible_ssh_user=vagrant ansible_ssh_private_key_file=.vagrant/machines/app1/virtualbox/private_key
+app2 ansible_ssh_host=10.10.3.21 ansible_ssh_user=vagrant ansible_ssh_private_key_file=.vagrant/machines/app2/virtualbox/private_key
+```
+
+You can also enable WinRM via the `--winrm` command line flag: 
 
 ```
 export GOSUPERVISE_WINRM=true
@@ -43,28 +36,17 @@ gosupervise pod somehosts somecommand
 
 ```
 
-or you can specify `winrm=true` inside your Ansible inventory:
-
-```yaml
-[appservers]
-linuxbox1 ansible_ssh_host=10.10.2.20 ansible_ssh_user=vagrant ansible_ssh_private_key_file=.vagrant/machines/app1/virtualbox/private_key
-windowsbox1 ansible_ssh_host=10.10.2.21 ansible_ssh_user=vagrant winrm=true
-```
 
 ### Trying it out
   
 To try out running one of the example Ansible provisioned apps try the following:
 
-* add the `$PWD/bin` folder to your `$PATH`
-* run the following command:
+* add the `$PWD/bin` folder to your `$PATH` so that you can type in `gosupervise` on the command line
 
-```
-    export HOSTNAME=supervisor-znuj5
-```
-    
-which gives the current shell a pod name. 
+The following examples use these files:
 
-Note that the following examples cheat a little in that they use the Replication Controller called `fabric8` for now to store the ownership of pods -> hosts. When we create the RC for the supervisors then we should be using that RC instead ;)
+* `inventory` is the Ansible inventory file used unless you specify the `--inventory` command line option
+* `rc.yml` is the Replication Controller configuration used for the supervisor pods unless you specify the `--rc` command line option
 
 ### [fabric8-ansible-hawtapp](https://github.com/fabric8io/fabric8-ansible-hawtapp)
 
@@ -118,7 +100,43 @@ The output is of the format:
 ```
 
 Where the output is of the form ` pod.ansible.fabric8.io/$HOSTNAME: $PODNAME`
+
+### Simulating multiple pods
+
+When working on the code outside of Kubernetes its useful to simulate running pods. To do this just set the `HOSTNAME` environment variable to the pod name you wish to use:
+
+```
+    export HOSTNAME=supervisor-znuj5
+```
+
+This lets you pretend to be different pods from the command line when trying it out locally. e.g. run the `gosupervise pod ...` command in 2 shells as different pods.
+
+Note that supervise pod checks all pods are still running and un-allocates dead pods; so you might want to cheat and use an existing pod name for your `HOSTNAME` to test out how multiple pods grab hosts etc.
+
+
  
+## Building
+ 
+ * install [glide](https://github.com/Masterminds/glide#install)
+ * prepare the `vendor` folder by typing
+ 
+ ```
+     make bootstrap
+     export GO15VENDOREXPERIMENT=1
+ ```
+     
+ * then to build the binary
+     
+ ```
+     make build
+ ```
+     
+ * you can then run it via
+ 
+ ```    
+     ./bin/gosupervise
+ ```
+
 ## License
 
 Copyright 2016 Red Hat, Inc.

@@ -85,6 +85,12 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 	if len(hostEntries) > 0 {
 		thisPodName := os.Getenv("HOSTNAME")
 		if len(thisPodName) == 0 {
+			thisPodName, err = os.Hostname()
+			if err != nil {
+				return nil, err
+			}
+		}
+		if len(thisPodName) == 0 {
 			return nil, fmt.Errorf("Could not find the pod name using $HOSTNAME!")
 		}
 
