@@ -59,12 +59,20 @@ type the following to setup the VMs and provision things with Ansible
     ansible-playbook -i inventory provisioning/site.yml -vv
 ```
     
-Now to run the supervisor on one of the hosts run:
+Now to setup the Replication Controller for the supervisors run the following, where `appservers` is the hosts from the inventory
+
+```    
+    gosupervise rc appservers
+```      
+
+To run the supervisor pod locally on one of the hosts run:
     
 ```    
     gosupervise pod appservers /opt/cdi-camel-2.2.98-SNAPSHOT-app/bin/run.sh
 ```      
-  
+
+To try using windows machines, replace `appservers` with `winboxes` in the above commands; assuming you have created the [Windows vagrant machine](https://github.com/fabric8io/fabric8-ansible-hawtapp/tree/master/windows) locally
+ 
 #### for [fabric8-ansible-spring-boot](https://github.com/fabric8io/fabric8-ansible-spring-boot)
 
 type the following to setup the VMs and provision things with Ansible
@@ -76,7 +84,13 @@ type the following to setup the VMs and provision things with Ansible
     ansible-playbook -i inventory provisioning/site.yml -vv
 ```
     
-Now to run the supervisor on one of the hosts run:
+Now to setup the Replication Controller for the supervisors run the following, where `appservers` is the hosts from the inventory
+    
+```    
+    gosupervise rc appservers
+```      
+
+To run the supervisor pod locally on one of the hosts run:
     
 ```    
     gosupervise pod appservers /opt/springboot-camel-2.2.98-SNAPSHOT
