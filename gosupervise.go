@@ -272,15 +272,17 @@ func runAnsiblePod(c *cli.Context) {
 	useWinRM := c.Bool("winrm") || hostEntry.UseWinRM
 	if useWinRM {
 		log.Info("Using WinRM to connect to the hosts %s", hosts)
-		password, err := osExpandAndVerify(c, "password")
-		if err != nil {
-			fail(err)
+		password := hostEntry.Password
+		if len(password) == 0 {
+			password, err = osExpandAndVerify(c, "password")
+			if err != nil {
+				fail(err)
+			}
 		}
 		err = winrm.RemoteWinRmCommand(user, password, host, port, command)
 	} else {
 		privatekey := hostEntry.PrivateKey
-		hostPort := host + ":" + port
-		err = ssh.RemoteSshCommand(user, privatekey, hostPort, command)
+		err = ssh.RemoteSshCommand(user, privatekey, host, port, command)
 	}
 	if err != nil {
 		log.Err("Failed: %v", err)
@@ -318,8 +320,7 @@ func run(c *cli.Context) {
 		if err != nil {
 			fail(err)
 		}
-		hostPort := host + ":" + port
-		err = ssh.RemoteSshCommand(user, privatekey, hostPort, command)
+		err = ssh.RemoteSshCommand(user, privatekey, host, port, command)
 	}
 	if err != nil {
 		log.Err("Failed: %v", err)

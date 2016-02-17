@@ -34,6 +34,7 @@ type HostEntry struct {
 	User       string
 	PrivateKey string
 	UseWinRM   bool
+	Password   string
 }
 
 func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, error) {
@@ -147,9 +148,6 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 			hostName := pickedEntry.Name;
 			if len(pickedEntry.Host) == 0 {
 				return nil, fmt.Errorf("Could not find host name for entry %s", pickedEntry.Name)
-			}
-			if len(pickedEntry.PrivateKey) == 0 {
-				return nil, fmt.Errorf("Could not find PrivateKey for entry %s", pickedEntry.Name)
 			}
 			if len(pickedEntry.User) == 0 {
 				return nil, fmt.Errorf("Could not find User for entry %s", pickedEntry.Name)
@@ -329,6 +327,7 @@ func parseHostEntry(text string) *HostEntry {
 	host := ""
 	privateKey := ""
 	useWinRM := false
+	password := ""
 	count := len(values)
 	if count > 0 {
 		name = values[0];
@@ -347,6 +346,8 @@ func parseHostEntry(text string) *HostEntry {
 					privateKey = paramValue
 				case "winrm":
 					useWinRM = paramValue == "true"
+				case "ansible_ssh_pass":
+					password = paramValue
 				}
 			}
 		}
@@ -362,5 +363,6 @@ func parseHostEntry(text string) *HostEntry {
 		User: user,
 		PrivateKey: privateKey,
 		UseWinRM: useWinRM,
+		Password: password,
 	}
 }
