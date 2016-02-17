@@ -3,18 +3,16 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"os"
 	"strings"
-
-	"golang.org/x/crypto/ssh"
 
 	"github.com/codegangsta/cli"
 
 	"github.com/fabric8io/gosupervise/ansible"
 	"github.com/fabric8io/gosupervise/log"
 	"github.com/fabric8io/gosupervise/k8s"
+	"github.com/fabric8io/gosupervise/ssh"
+	"github.com/fabric8io/gosupervise/winrm"
 
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 )
@@ -82,6 +80,11 @@ running inside Docker inside Kubernetes.
 					Value:  "rc.yml",
 					Usage:  "The YAML file of the ReplicationController for the supervisors",
 				},
+				cli.StringFlag{
+					Name:   "password",
+					Value:  "$GOSUPERVISE_PASSWORD",
+					Usage:  "The password used for WinRM connections",
+				},
 			},
 		},
 		{
@@ -113,7 +116,7 @@ running inside Docker inside Kubernetes.
 				cli.StringFlag{
 					Name:   "user",
 					Value:  "$GOSUPERVISE_USER",
-					Usage:  "The user to use on the remote SSH connection",
+					Usage:  "The user to use on the remote connection",
 				},
 				cli.StringFlag{
 					Name:   "privatekey",
@@ -123,12 +126,20 @@ running inside Docker inside Kubernetes.
 				cli.StringFlag{
 					Name:   "host",
 					Value:  "$GOSUPERVISE_HOST",
-					Usage:  "The host for the remote SSH connection",
+					Usage:  "The host for the remote connection",
 				},
 				cli.StringFlag{
 					Name:   "command",
 					Value:  "$GOSUPERVISE_COMMAND",
-					Usage:  "The remote command to invoke over SSH",
+					Usage:  "The remote command to invoke on the host",
+				},
+				cli.StringFlag{
+					Name:   "password",
+					Usage:  "The password if using WinRM to execute the command",
+				},
+				cli.BoolFlag{
+					Name:   "ssh",
+					Usage:  "Whether to use SSH (true) or WinRM (false)",
 				},
 			},
 		},
@@ -204,10 +215,21 @@ func runAnsiblePod(c *cli.Context) {
 		fail(err)
 	}
 	host := hostEntry.Host
-	privatekey := hostEntry.PrivateKey
 	user := hostEntry.User
-	hostPort := host + ":" + port
-	err = remoteSshCommand(user, privatekey, hostPort, command)
+
+	// TODO - figure out SSH via HostEntry or a CLI option?
+	useSsh := true
+	if useSsh {
+		privatekey := hostEntry.PrivateKey
+		hostPort := host + ":" + port
+		err = ssh.RemoteSshCommand(user, privatekey, hostPort, command)
+	} else {
+		password, err := osExpandAndVerify(c, "password")
+		if err != nil {
+			fail(err)
+		}
+		err = winrm.RemoteWinRmCommand(user, password, host, port, command)
+	}
 	if err != nil {
 		log.Err("Failed: %v", err)
 	}
@@ -254,87 +276,30 @@ func run(c *cli.Context) {
 	if err != nil {
 		fail(err)
 	}
-	privatekey, err := osExpandAndVerify(c, "privatekey")
-	if err != nil {
-		fail(err)
-	}
 	user, err := osExpandAndVerify(c, "user")
 	if err != nil {
 		fail(err)
 	}
-	hostPort := host + ":" + port
-	err = remoteSshCommand(user, privatekey, hostPort, command)
+	useSsh := c.Bool("ssh")
+	if useSsh {
+		privatekey, err := osExpandAndVerify(c, "privatekey")
+		if err != nil {
+			fail(err)
+		}
+		hostPort := host + ":" + port
+		err = ssh.RemoteSshCommand(user, privatekey, hostPort, command)
+	} else {
+		password, err := osExpandAndVerify(c, "password")
+		if err != nil {
+			fail(err)
+		}
+		err = winrm.RemoteWinRmCommand(user, password, host, port, command)
+	}
 	if err != nil {
 		log.Err("Failed: %v", err)
 	}
 }
 
-func remoteSshCommand(user string, privateKey string, hostPort string, cmd string) error {
-	sshConfig := &ssh.ClientConfig{
-		User: user,
-		Auth: []ssh.AuthMethod{
-			PublicKeyFile(privateKey),
-		},
-	}
-	if sshConfig == nil {
-		log.Info("Whoah!")
-	}
-	connection, err := ssh.Dial("tcp", hostPort, sshConfig)
-	if err != nil {
-		return fmt.Errorf("Failed to dial: %s", err)
-	}
-	session, err := connection.NewSession()
-	if err != nil {
-		return fmt.Errorf("Failed to create session: %s", err)
-	}
-	defer session.Close()
-
-	modes := ssh.TerminalModes{
-		// ssh.ECHO:          0,     // disable echoing
-		ssh.TTY_OP_ISPEED: 14400, // input speed = 14.4kbaud
-		ssh.TTY_OP_OSPEED: 14400, // output speed = 14.4kbaud
-	}
-
-	if err := session.RequestPty("xterm", 80, 40, modes); err != nil {
-		return fmt.Errorf("Request for pseudo terminal failed: %s", err)
-	}
-
-	stdin, err := session.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("Unable to setup stdin for session: %v", err)
-	}
-	go io.Copy(stdin, os.Stdin)
-
-	stdout, err := session.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("Unable to setup stdout for session: %v", err)
-	}
-	go io.Copy(os.Stdout, stdout)
-
-	stderr, err := session.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("Unable to setup stderr for session: %v", err)
-	}
-	go io.Copy(os.Stderr, stderr)
-
-	log.Info("Running command %s", cmd)
-	err = session.Run(cmd)
-	if err != nil {
-		return fmt.Errorf("Failed to run command: " + cmd + ": %v", err)
-	}
-	return nil
+type Executor interface {
+	RemoteSshCommand(user string, privateKey string, hostPort string, cmd string) error
 }
-
-func PublicKeyFile(file string) ssh.AuthMethod {
-	buffer, err := ioutil.ReadFile(file)
-	if err != nil {
-		return nil
-	}
-
-	key, err := ssh.ParsePrivateKey(buffer)
-	if err != nil {
-		return nil
-	}
-	return ssh.PublicKeys(key)
-}
-
