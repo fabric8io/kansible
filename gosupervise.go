@@ -85,6 +85,11 @@ running inside Docker inside Kubernetes.
 					Value:  "$GOSUPERVISE_PASSWORD",
 					Usage:  "The password used for WinRM connections",
 				},
+				cli.BoolFlag{
+					Name:   "winrm",
+					EnvVar: "GOSUPERVISE_WINRM",
+					Usage:  "Enables the use of WinRM instead of SSH",
+				},
 			},
 		},
 		{
@@ -138,8 +143,8 @@ running inside Docker inside Kubernetes.
 					Usage:  "The password if using WinRM to execute the command",
 				},
 				cli.BoolFlag{
-					Name:   "ssh",
-					Usage:  "Whether to use SSH (true) or WinRM (false)",
+					Name:   "winrm",
+					Usage:  "Enables the use of WinRM instead of SSH",
 				},
 			},
 		},
@@ -178,6 +183,41 @@ func fail(err error) {
 	log.Die("Failed: %s", err)
 }
 
+func applyAnsibleRC(c *cli.Context) {
+	args := c.Args()
+	if len(args) < 1 {
+		log.Die("Expected an argument!")
+	}
+	hosts := args[0]
+
+	f := cmdutil.NewFactory(nil)
+	if f == nil {
+		log.Die("Failed to create Kuberentes client factory!")
+	}
+	kubeclient, _ := f.Client()
+	if kubeclient == nil {
+		log.Die("Failed to create Kuberentes client!")
+	}
+	ns, _, _ := f.DefaultNamespace()
+	if len(ns) == 0 {
+		ns = "default"
+	}
+
+	rcName, err := osExpandAndVerify(c, "rc")
+	if err != nil {
+		fail(err)
+	}
+
+	inventory, err := osExpandAndVerify(c, "inventory")
+	if err != nil {
+		fail(err)
+	}
+	_, err = ansible.UpdateAnsibleRC(inventory, hosts, kubeclient, ns, rcName)
+	if err != nil {
+		fail(err)
+	}
+}
+
 func runAnsiblePod(c *cli.Context) {
 	args := c.Args()
 	if len(args) < 2 {
@@ -189,8 +229,17 @@ func runAnsiblePod(c *cli.Context) {
 	log.Info("running command on a host from %s and command `%s`", hosts, command)
 
 	f := cmdutil.NewFactory(nil)
+	if f == nil {
+		log.Die("Failed to create Kuberentes client factory!")
+	}
 	kubeclient, _ := f.Client()
+	if kubeclient == nil {
+		log.Die("Failed to create Kuberentes client!")
+	}
 	ns, _, _ := f.DefaultNamespace()
+	if len(ns) == 0 {
+		ns = "default"
+	}
 
 	rcFile, err := osExpandAndVerify(c, "rc")
 	if err != nil {
@@ -210,6 +259,9 @@ func runAnsiblePod(c *cli.Context) {
 		fail(err)
 	}
 	rcName := rc.ObjectMeta.Name
+	if len(rcName) == 0 {
+		log.Die("No ReplicationController name in the yaml file %s", rcFile)
+	}
 	hostEntry, err := ansible.ChooseHostAndPrivateKey(inventory, hosts, kubeclient, ns, rcName)
 	if err != nil {
 		fail(err)
@@ -217,47 +269,21 @@ func runAnsiblePod(c *cli.Context) {
 	host := hostEntry.Host
 	user := hostEntry.User
 
-	// TODO - figure out SSH via HostEntry or a CLI option?
-	useSsh := true
-	if useSsh {
-		privatekey := hostEntry.PrivateKey
-		hostPort := host + ":" + port
-		err = ssh.RemoteSshCommand(user, privatekey, hostPort, command)
-	} else {
+	useWinRM := c.Bool("winrm") || hostEntry.UseWinRM
+	if useWinRM {
+		log.Info("Using WinRM to connect to the hosts %s", hosts)
 		password, err := osExpandAndVerify(c, "password")
 		if err != nil {
 			fail(err)
 		}
 		err = winrm.RemoteWinRmCommand(user, password, host, port, command)
+	} else {
+		privatekey := hostEntry.PrivateKey
+		hostPort := host + ":" + port
+		err = ssh.RemoteSshCommand(user, privatekey, hostPort, command)
 	}
 	if err != nil {
 		log.Err("Failed: %v", err)
-	}
-}
-
-func applyAnsibleRC(c *cli.Context) {
-	args := c.Args()
-	if len(args) < 1 {
-		log.Die("Expected an argument!")
-	}
-	hosts := args[0]
-
-	f := cmdutil.NewFactory(nil)
-	kubeclient, _ := f.Client()
-	ns, _, _ := f.DefaultNamespace()
-
-	rcName, err := osExpandAndVerify(c, "rc")
-	if err != nil {
-		fail(err)
-	}
-
-	inventory, err := osExpandAndVerify(c, "inventory")
-	if err != nil {
-		fail(err)
-	}
-	_, err = ansible.UpdateAnsibleRC(inventory, hosts, kubeclient, ns, rcName)
-	if err != nil {
-		fail(err)
 	}
 }
 
@@ -280,20 +306,20 @@ func run(c *cli.Context) {
 	if err != nil {
 		fail(err)
 	}
-	useSsh := c.Bool("ssh")
-	if useSsh {
+	useWinRM := c.Bool("winrm")
+	if useWinRM {
+		password, err := osExpandAndVerify(c, "password")
+		if err != nil {
+			fail(err)
+		}
+		err = winrm.RemoteWinRmCommand(user, password, host, port, command)
+	} else {
 		privatekey, err := osExpandAndVerify(c, "privatekey")
 		if err != nil {
 			fail(err)
 		}
 		hostPort := host + ":" + port
 		err = ssh.RemoteSshCommand(user, privatekey, hostPort, command)
-	} else {
-		password, err := osExpandAndVerify(c, "password")
-		if err != nil {
-			fail(err)
-		}
-		err = winrm.RemoteWinRmCommand(user, password, host, port, command)
 	}
 	if err != nil {
 		log.Err("Failed: %v", err)

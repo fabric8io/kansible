@@ -24,6 +24,33 @@ This process supervises a running process on a remote machine.
     ./bin/gosupervise
 ```
 
+### Configuring gosupervise
+
+You can switch between using SSH (the default) or WinRM (for Windows) either by specifying the `--winrm` command flag 
+
+
+```
+export GOSUPERVISE_WINRM=true
+gosupervise pod --winrm somehosts somecommand
+
+```
+
+or by setting the environment variable `GOSUPERVISE_WINRM` which is a little easier to configure on the RC YAML:
+
+```
+export GOSUPERVISE_WINRM=true
+gosupervise pod somehosts somecommand
+
+```
+
+or you can specify `winrm=true` inside your Ansible inventory:
+
+```yaml
+[appservers]
+linuxbox1 ansible_ssh_host=10.10.2.20 ansible_ssh_user=vagrant ansible_ssh_private_key_file=.vagrant/machines/app1/virtualbox/private_key
+windowsbox1 ansible_ssh_host=10.10.2.21 ansible_ssh_user=vagrant winrm=true
+```
+
 ### Trying it out
   
 To try out running one of the example Ansible provisioned apps try the following:

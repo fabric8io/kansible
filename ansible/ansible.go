@@ -33,6 +33,7 @@ type HostEntry struct {
 	Host       string
 	User       string
 	PrivateKey string
+	UseWinRM   bool
 }
 
 func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, error) {
@@ -80,7 +81,6 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 
 	// lets pick a random entry
 	if len(hostEntries) > 0 {
-
 		thisPodName := os.Getenv("HOSTNAME")
 		if len(thisPodName) == 0 {
 			return nil, fmt.Errorf("Could not find the pod name using $HOSTNAME!")
@@ -93,9 +93,15 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 				// lets sleep before retrying
 				time.Sleep(time.Duration(random(1000, 20000)) * time.Millisecond)
 			}
+			if c == nil {
+				return nil, fmt.Errorf("No Kubernetes Client specified!")
+			}
 			rc, err := c.ReplicationControllers(ns).Get(rcName)
 			if err != nil {
 				return nil, err
+			}
+			if rc == nil {
+				return nil, fmt.Errorf("No ReplicationController found for name %s", rcName)
 			}
 
 			pods, err := c.Pods(ns).List(nil, nil)
@@ -322,6 +328,7 @@ func parseHostEntry(text string) *HostEntry {
 	user := ""
 	host := ""
 	privateKey := ""
+	useWinRM := false
 	count := len(values)
 	if count > 0 {
 		name = values[0];
@@ -338,6 +345,8 @@ func parseHostEntry(text string) *HostEntry {
 					user = paramValue
 				case "ansible_ssh_private_key_file":
 					privateKey = paramValue
+				case "winrm":
+					useWinRM = paramValue == "true"
 				}
 			}
 		}
@@ -352,5 +361,6 @@ func parseHostEntry(text string) *HostEntry {
 		Host: host,
 		User: user,
 		PrivateKey: privateKey,
+		UseWinRM: useWinRM,
 	}
 }
