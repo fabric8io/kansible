@@ -1,6 +1,8 @@
 machine:
   services:
     - docker
+  environment:
+    IMPORT_PATH: "github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME"
 
 dependencies:
   pre:
@@ -9,10 +11,11 @@ dependencies:
     - tar -vxz -C $HOME/bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
     - export PATH="$HOME/bin:$PATH" GLIDE_HOME="$HOME/.glide"
     - export GO15VENDOREXPERIMENT=1
-    - export GOPATH=$HOME
 
   override:
     - go version
+    - mkdir -p "$GOPATH/src/$IMPORT_PATH"
+    - rsync -azC --delete ./ "$GOPATH/src/$IMPORT_PATH/"
     - make bootstrap build test
 
 test:
