@@ -8,6 +8,7 @@ dependencies:
     - mkdir -p $HOME/bin
     - tar -vxz -C $HOME/bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
     - export PATH="$HOME/bin:$PATH" GLIDE_HOME="$HOME/.glide"
+    - export GO15VENDOREXPERIMENT=1
 
   override:
     - make bootstrap build test
