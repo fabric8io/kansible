@@ -31,6 +31,7 @@ const (
 type HostEntry struct {
 	Name       string
 	Host       string
+	Port       string
 	User       string
 	PrivateKey string
 	UseWinRM   bool
@@ -325,6 +326,7 @@ func parseHostEntry(text string) *HostEntry {
 	name := ""
 	user := ""
 	host := ""
+	port := ""
 	privateKey := ""
 	useWinRM := false
 	password := ""
@@ -342,6 +344,8 @@ func parseHostEntry(text string) *HostEntry {
 					host = paramValue
 				case "ansible_ssh_user":
 					user = paramValue
+				case "ansible_port":
+					port = paramValue
 				case "ansible_ssh_private_key_file":
 					privateKey = paramValue
 				case "winrm":
@@ -360,6 +364,7 @@ func parseHostEntry(text string) *HostEntry {
 	return &HostEntry{
 		Name: name,
 		Host: host,
+		Port: port,
 		User: user,
 		PrivateKey: privateKey,
 		UseWinRM: useWinRM,
