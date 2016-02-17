@@ -72,7 +72,7 @@ func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, error) {
 }
 
 
-// ChooseHostAndPrivateKey parses the given Ansbile inventory file for the hosts
+// ChooseHostAndPrivateKey parses the given Ansible inventory file for the hosts
 // and chooses a single host inside it, returning the host name and the private key
 func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Client, ns string, rcName string) (*HostEntry, error) {
 	hostEntries, err := LoadHostEntries(inventoryFile, hosts)
