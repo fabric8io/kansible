@@ -27,7 +27,6 @@ const (
 	gitConfig = ".git/config"
 )
 
-
 type HostEntry struct {
 	Name       string
 	Host       string
