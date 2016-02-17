@@ -26,7 +26,7 @@ This process supervises a running process on a remote machine.
 
 ### Trying it out
   
-To try out running one of the example anible provisioned apps try the following:
+To try out running one of the example Ansible provisioned apps try the following:
 
 * add the `$PWD/bin` folder to your `$PATH`
 * run the following command:

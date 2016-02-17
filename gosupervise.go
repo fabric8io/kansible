@@ -127,7 +127,7 @@ running inside Docker inside Kubernetes.
 				},
 				cli.StringFlag{
 					Name:   "command",
-					Value:  "$GOSUPERVISE_COMAND",
+					Value:  "$GOSUPERVISE_COMMAND",
 					Usage:  "The remote command to invoke over SSH",
 				},
 			},
