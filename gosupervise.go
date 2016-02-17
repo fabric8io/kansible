@@ -246,10 +246,6 @@ func runAnsiblePod(c *cli.Context) {
 		fail(err)
 	}
 
-	port, err := osExpandAndVerifyGlobal(c, "port")
-	if err != nil {
-		fail(err)
-	}
 	inventory, err := osExpandAndVerify(c, "inventory")
 	if err != nil {
 		fail(err)
@@ -268,7 +264,13 @@ func runAnsiblePod(c *cli.Context) {
 	}
 	host := hostEntry.Host
 	user := hostEntry.User
-
+	port := hostEntry.Port
+	if len(port) == 0 {
+		port, err = osExpandAndVerifyGlobal(c, "port")
+	}
+	if err != nil {
+		fail(err)
+	}
 	useWinRM := c.Bool("winrm") || hostEntry.UseWinRM
 	if useWinRM {
 		log.Info("Using WinRM to connect to the hosts %s", hosts)
