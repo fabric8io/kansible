@@ -71,6 +71,7 @@ func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, error) {
 	return hostEntries, nil
 }
 
+
 // ChooseHostAndPrivateKey parses the given Ansbile inventory file for the hosts
 // and chooses a single host inside it, returning the host name and the private key
 func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Client, ns string, rcName string) (*HostEntry, error) {
