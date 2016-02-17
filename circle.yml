@@ -1,6 +1,4 @@
 machine:
-  golang:
-    version: 1.5
   services:
     - docker
 
@@ -11,6 +9,9 @@ dependencies:
     - tar -vxz -C $HOME/bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
     - export PATH="$HOME/bin:$PATH" GLIDE_HOME="$HOME/.glide"
 
+  override:
+    - make bootstrap build test
+
 test:
   override:
     - echo yes
@@ -20,7 +21,6 @@ deployment:
     branch: master
     owner: fabric8io
     commands:
-      - make bootstrap build test
       - docker build -t fabric8/gosupervise .
       - docker login -e $DOCKER_EMAIL -u $DOCKER_USER -p $DOCKER_PASS
       - docker push fabric8/gosupervise
