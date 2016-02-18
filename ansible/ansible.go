@@ -334,7 +334,15 @@ func forwardPort(conn net.Conn, address string) {
 // UpdateAnsibleRC reads the Ansible inventory and the RC for the supervisor and updates it in Kubernetes
 // along with removing any remaining pods which are for old hosts
 func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns string, rcFile string) (*api.ReplicationController, error) {
-	rcConfig, err := k8s.ReadReplicationControllerFromFile(rcFile)
+	variables, err := LoadAnsibleVariables(hosts)
+	if err != nil {
+		return nil, err
+	}
+	data, err := LoadFileAndReplaceVariables(rcFile, variables)
+	if err != nil {
+		return nil, err
+	}
+	rcConfig, err := k8s.ReadReplicationController(data)
 	if err != nil {
 		return nil, err
 	}
@@ -661,3 +669,4 @@ func parseHostEntry(text string) *HostEntry {
 		Password: password,
 	}
 }
+

@@ -11,19 +11,24 @@ import (
 
 // ReadReplicationControllerFromFile reads the ReplicationController object from the given file name
 func ReadReplicationControllerFromFile(filename string) (*api.ReplicationController, error) {
-	data, err := readBytesFromFile(filename)
+	data, err := ReadBytesFromFile(filename)
 	if err != nil {
 		return nil, err
 	}
+	return ReadReplicationController(data)
+}
+
+// ReadReplicationController loads a ReplicationController from the given data
+func ReadReplicationController(data []byte) (*api.ReplicationController, error) {
 	rc := api.ReplicationController{}
-	// TODO(jackgr): Replace with a call to testapi.Codec().Decode().
 	if err := yaml.Unmarshal(data, &rc); err != nil {
 		return nil, err
 	}
 	return &rc, nil
 }
 
-func readBytesFromFile(filename string) ([]byte, error) {
+// ReadBytesFromFile loads the given file into memory
+func ReadBytesFromFile(filename string) ([]byte, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
