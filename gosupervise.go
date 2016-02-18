@@ -307,7 +307,7 @@ func generateBashScript(file string, useWinRM bool) error {
 	if useWinRM {
 		shellCommand = "PowerShell"
 	}
-	text :=  "#!/bin/sh\n" + "echo opening shell on remote machine...\n" + "pod appservers " + shellCommand + "\n";
+	text :=  "#!/bin/sh\n" + "echo opening shell on remote machine...\n" + "gosupervise pod appservers " + shellCommand + "\n";
 	return ioutil.WriteFile(file, []byte(text), 0555)
 }
 
