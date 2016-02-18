@@ -1,6 +1,6 @@
 # Go Supervise
 
-This process supervises a running process on a remote machine.
+Orchestrate processes with Kubernetes and Ansible for cases where you have not yet dockerized your processes, or your process currently needs to run on Windows, AIX, Solaris or HP-UX or an old Linux distro that predates docker
 
 ### Configuring gosupervise
 
