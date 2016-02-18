@@ -11,12 +11,12 @@ import(
 
 // RemoteWinRmCommand runs the remote command on a windows machine
 func RemoteWinRmCommand(user string, password string, host string, port string, cmd string) error {
-	log.Info("Connecting to windows host over WinRM on host %s and port %s", host, port)
 	portNumber, err := strconv.Atoi(port)
 	if err != nil {
 	    log.Err("Failed to convert port number text `%s` to a number: %s", port, err)
 		return nil
 	}
+	log.Info("Connecting to windows host over WinRM on host %s and port %d with user %s and password %s", host, portNumber, user, password)
 	client, err := winrm.NewClient(&winrm.Endpoint{Host: host, Port: portNumber, HTTPS: false, Insecure: false}, user, password)
 	if err != nil {
 	    fmt.Println(err)
