@@ -4,4 +4,4 @@ bin/
 _dist/
 .idea
 glide.lock
-golibrary
+golib
