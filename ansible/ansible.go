@@ -33,6 +33,10 @@ const (
 // EnvRC is the environment variable on a pod for the name of the ReplicationController
 	EnvRC = "GOSUPERVISE_RC"
 
+// EnvBash is the environment variable on a pod for the name of the bash script to generate on startup for
+// opening a remote shell
+	EnvBash = "GOSUPERVISE_BASH"
+
 // PlaybookVolumeMount is the volume mount point where the playbook is assumed to be in the supervisor pod
 	PlaybookVolumeMount = "/playbook"
 
@@ -254,6 +258,7 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 	}
 	k8s.EnsureContainerHasEnvVar(container, EnvHosts, hosts)
 	k8s.EnsureContainerHasEnvVar(container, EnvRC, rcName)
+	k8s.EnsureContainerHasEnvVar(container, EnvBash, "/usr/local/bin/bash")
 	command := k8s.GetContainerEnvVar(container, EnvCommand)
 	if len(command) == 0 {
 		return nil, fmt.Errorf("No environemnt variable value defined for %s in ReplicationController YAML file %s", EnvCommand, rcFile)

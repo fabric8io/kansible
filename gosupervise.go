@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"strings"
 
@@ -89,6 +90,11 @@ running inside Docker inside Kubernetes.
 					EnvVar: "GOSUPERVISE_WINRM",
 					Usage:  "Enables the use of WinRM instead of SSH",
 				},
+				cli.StringFlag{
+					Name:   "bash",
+					Value:  "$GOSUPERVISE_BASH",
+					Usage:  "If specified a script is generated for running a bash like shell on the remote machine",
+				},
 			},
 		},
 		{
@@ -158,13 +164,18 @@ running inside Docker inside Kubernetes.
 }
 
 
-func osExpandAndVerify(c *cli.Context, name string) (string, error) {
+func osExpand(c *cli.Context, name string) string {
 	flag := c.String(name)
 	value := os.ExpandEnv(flag)
+	log.Debug("flag %s is %s", name, value)
+	return value
+}
+
+func osExpandAndVerify(c *cli.Context, name string) (string, error) {
+	value := osExpand(c, name)
 	if len(value) == 0 {
 		return "", fmt.Errorf("No parameter supplied for: %s", name)
 	}
-	log.Debug("flag %s is %s", name, value)
 	return value, nil
 }
 
@@ -261,7 +272,17 @@ func runAnsiblePod(c *cli.Context) {
 	if err != nil {
 		fail(err)
 	}
+
 	useWinRM := c.Bool("winrm") || hostEntry.UseWinRM
+
+	bash := osExpand(c, "bash")
+	if len(bash) > 0 {
+		err = generateBashScript(bash, useWinRM)
+		if err != nil {
+			log.Err("Failed to generate bash script at %s due to: %v", bash, err)
+		}
+	}
+
 	if useWinRM {
 		log.Info("Using WinRM to connect to the hosts %s", hosts)
 		password := hostEntry.Password
@@ -279,6 +300,15 @@ func runAnsiblePod(c *cli.Context) {
 	if err != nil {
 		log.Err("Failed: %v", err)
 	}
+}
+
+func generateBashScript(file string, useWinRM bool) error {
+	shellCommand := "bash"
+	if useWinRM {
+		shellCommand = "PowerShell"
+	}
+	text :=  "#!/bin/sh\n" + "echo opening shell on remote machine...\n" + "pod appservers " + shellCommand + "\n";
+	return ioutil.WriteFile(file, []byte(text), 0555)
 }
 
 func run(c *cli.Context) {
