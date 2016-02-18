@@ -1,0 +1,6 @@
+FROM scratch
+# Call 'make build-all' before building it
+ADD _dist/linux-amd64/kansible /
+# Image must be used with 2 arguments: HOSTS and COMMANDS
+# (they can't be added as environment since no shell is available)
+CMD [ "/kansible", "pod" ]
