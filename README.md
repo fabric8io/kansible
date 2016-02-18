@@ -88,8 +88,15 @@ Now to setup the Replication Controller for the supervisors run the following, w
 
 The pods should now start up for each host in the inventory!
 
+### Using Windows
+
+To use windows you need to first make sure you've installed **pywinrm**:
+
+    sudo pip install pywinrm
+    
 To try using windows machines, replace `appservers` with `winboxes` in the above commands; assuming you have created the [Windows vagrant machine](https://github.com/fabric8io/fabric8-ansible-hawtapp/tree/master/windows) locally
 
+Or you can add the windows machine into the `appservers` hosts section in the `inventory` file.
 
 ### Checking the runtime status of the supervisors
  
