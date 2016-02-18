@@ -340,6 +340,22 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 	}
 	rcName := rcConfig.ObjectMeta.Name
 	podSpec := k8s.GetOrCreatePodSpec(rcConfig)
+
+	// lets default labels and selectors if they are missing
+	rcLabels := rcConfig.ObjectMeta.Labels
+	if len(rcLabels) > 0 {
+		rcSpec := rcConfig.Spec
+		if len(rcSpec.Selector) == 0 {
+			rcSpec.Selector = rcLabels
+		}
+		template := rcSpec.Template
+		if template != nil {
+			if len(template.ObjectMeta.Labels) == 0 {
+				template.ObjectMeta.Labels = rcLabels
+			}
+		}
+	}
+
 	container := k8s.GetFirstContainerOrCreate(rcConfig)
 	if len(container.Image) == 0 {
 		container.Image = "fabric8/gosupervise"
