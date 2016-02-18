@@ -2,10 +2,46 @@
 
 Orchestrate processes with Kubernetes and Ansible for cases where you have not yet dockerized your processes, or your process currently needs to run on Windows, AIX, Solaris or HP-UX or an old Linux distro that predates docker
 
-### Overview
+## Overview
 
-Kansible is a simple small tool for orchestrating your processes outside of Docker in the same way as you orchestate all your containers inside Kubernetes.
+Kansible is a simple tool for orchestrating your non container based processes in the same way as you orchestrate all your containers inside Kubernetes. 
 
+## How it works
+
+You use kansible as follows:
+
+* create an [Ansible playbook](http://docs.ansible.com/ansible/playbooks.html) to _install and provision_ the software you wish to run on a number of machines defined by the [Ansible inventory](http://docs.ansible.com/ansible/intro_inventory.html)
+* run the [Ansible playbook](http://docs.ansible.com/ansible/playbooks.html) either as part of a [CI / CD build pipeline](http://fabric8.io/guide/cdelivery.html) when there's a change to the git repo of the Playbook, or using a command line tool, cron or [Ansible Tower](https://www.ansible.com/tower)
+* define a Replication Controller YAML file for running the command for your process [like this example](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/rc.yml#L15-L16). Its mostly boilerplate other than the actual command you need to run execute your process. Notice you can use the `{{ foo_bar }}` ansible variable expressions to refer to variables from your [global ansible variables file](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/group_vars/appservers)
+* whenever the playbook git repo changes, run the **kansible rc** command inside a clone of the playbook git repository:
+
+    kansible rc myhosts
+    
+where `myhosts` is the name of the hosts you wish to use in the Ansible inventory.    
+
+Then **kansible** will create a Replication Controller of kansible pods which will start and supervise your processes. 
+
+For each remote process on Windows, Linux, Solaris, AIX, HPUX kansible will create a kansible pod in Kubernetes.
+
+### Using kansible
+
+* As proceses start and stop, you'll see the processes appear or disappear inside kubernetes, the CLI, REST API or the console.
+* You can scale up and down the Replication Controller via CLI, REST API or console.
+* You can then view the logs of any process in the usual kubernetes way via the command line, REST API or web console. 
+* [Centralised logging](http://fabric8.io/guide/logging.html) then works great on all your processes (providing the command you run outputs logs to `stdout` / `stderr`)
+
+### Exposing ports
+
+Any ports defined in the Replication Controller YAML file will be automatically forwarded to the remote process.
+
+This means you can take advantage of things like [centralised metrics and alerting](http://fabric8.io/guide/metrics.html) or Kubernetes Services and the built in service discovery and load balancing inside Kubernetes!
+
+### Opening a shell on the remote process
+
+You can open a shell directly on the remote machine via the web console or by running 
+
+    oc exec -p mypodname bash
+        
 ### Running Kansible
   
 To try out running one of the example Ansible provisioned apps try the following:
