@@ -71,7 +71,7 @@ The pods should now start up for each host in the inventory!
 If you wish to run the supervisor pod locally on one of the hosts run:
     
 ```    
-    gosupervise pod appservers /opt/cdi-camel-2.2.98-SNAPSHOT-app/bin/run.sh
+    gosupervise pod -rc hawtapp-demo appservers /opt/cdi-camel-2.2.98-SNAPSHOT-app/bin/run.sh
 ```      
 
 To try using windows machines, replace `appservers` with `winboxes` in the above commands; assuming you have created the [Windows vagrant machine](https://github.com/fabric8io/fabric8-ansible-hawtapp/tree/master/windows) locally
@@ -98,7 +98,7 @@ The pods should now start up for each host in the inventory!
 To run the supervisor pod locally on one of the hosts run:
     
 ```    
-    gosupervise pod appservers /opt/springboot-camel-2.2.98-SNAPSHOT
+    gosupervise pod  -rc springboot-demo appservers /opt/springboot-camel-2.2.98-SNAPSHOT
 ```      
 
 ### Checking the runtime status of the supervisors
@@ -106,10 +106,10 @@ To run the supervisor pod locally on one of the hosts run:
 To see which pods own which hosts run the following command:
  
 ```
-    oc export rc fabric8-ansible-hawtapp | grep ansible.fabric8  | sort
+    oc export rc hawtapp-demo | grep ansible.fabric8  | sort
 ```
 
-Where `fabric8-ansible-hawtapp` is the name of the RC for the supervisors.
+Where `hawtapp-demo` is the name of the RC for the supervisors.
 
 The output is of the format:
 

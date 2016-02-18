@@ -285,9 +285,8 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 	originalReplicas := rc.Spec.Replicas
 	rc.Spec = rcConfig.Spec
 
-	metadata := rc.ObjectMeta
+	metadata := &rc.ObjectMeta
 	resourceVersion := metadata.ResourceVersion
-	annotations := metadata.Annotations
 	rcSpec := &rc.Spec
 	hostCount := len(hostEntries)
 	replicas := originalReplicas
@@ -302,12 +301,14 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 	}
 
 	text := HostEntriesToString(hostEntries)
-	log.Info("Host entries text is now `%s`", text)
-	annotations[HostInventoryAnnotation] = text
+	if metadata.Annotations == nil {
+		metadata.Annotations = make(map[string]string)
+	}
+	metadata.Annotations[HostInventoryAnnotation] = text
 
 	log.Info("found RC with name %s and version %s and replicas %d", rcName, resourceVersion, rcSpec.Replicas)
 
-	deletePodsForOldHosts(c, ns, annotations, pods, hostEntries)
+	deletePodsForOldHosts(c, ns, metadata.Annotations, pods, hostEntries)
 
 	replicationController := c.ReplicationControllers(ns)
 	if isUpdate {
