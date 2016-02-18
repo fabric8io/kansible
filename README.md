@@ -41,7 +41,8 @@ gosupervise pod somehosts somecommand
   
 To try out running one of the example Ansible provisioned apps try the following:
 
-* add the `$PWD/bin` folder to your `$PATH` so that you can type in `gosupervise` on the command line
+* [Download a release](https://github.com/fabric8io/gosupervise/releases) and add `gosupervise` to your `$PATH` 
+* Or [Build gosupervise](https://github.com/fabric8io/gosupervise#building) then add the `$PWD/bin` folder to your `$PATH` so that you can type in `gosupervise` on the command line
 
 The following examples use these files:
 
@@ -53,7 +54,7 @@ The following examples use these files:
 type the following to setup the VMs and provision things with Ansible
 
 ```
-    git clone git@github.com:fabric8io/fabric8-ansible-hawtapp.git
+    git clone https://github.com/fabric8io/fabric8-ansible-hawtapp.git
     cd fabric8-ansible-hawtapp
     vagrant up
     ansible-playbook -i inventory provisioning/site.yml -vv
@@ -65,7 +66,9 @@ Now to setup the Replication Controller for the supervisors run the following, w
     gosupervise rc appservers
 ```      
 
-To run the supervisor pod locally on one of the hosts run:
+The pods should now start up for each host in the inventory!
+
+If you wish to run the supervisor pod locally on one of the hosts run:
     
 ```    
     gosupervise pod appservers /opt/cdi-camel-2.2.98-SNAPSHOT-app/bin/run.sh
@@ -78,7 +81,7 @@ To try using windows machines, replace `appservers` with `winboxes` in the above
 type the following to setup the VMs and provision things with Ansible
 
 ```
-    git clone git@github.com:fabric8io/fabric8-ansible-spring-boot.git
+    git clone https://github.com/fabric8io/fabric8-ansible-spring-boot.git
     cd fabric8-ansible-spring-boot
     vagrant up
     ansible-playbook -i inventory provisioning/site.yml -vv
@@ -89,6 +92,8 @@ Now to setup the Replication Controller for the supervisors run the following, w
 ```    
     gosupervise rc appservers
 ```      
+
+The pods should now start up for each host in the inventory!
 
 To run the supervisor pod locally on one of the hosts run:
     
@@ -101,10 +106,10 @@ To run the supervisor pod locally on one of the hosts run:
 To see which pods own which hosts run the following command:
  
 ```
-    oc export rc fabric8 | grep ansible.fabric8  | sort
+    oc export rc fabric8-ansible-hawtapp | grep ansible.fabric8  | sort
 ```
 
-Where `fabric8` is the name of the RC for the supervisors. (`fabric8` is a hack to reuse the fabric8 console for now until we actually make the RC ;).
+Where `fabric8-ansible-hawtapp` is the name of the RC for the supervisors.
 
 The output is of the format:
 
@@ -114,6 +119,7 @@ The output is of the format:
 ```
 
 Where the output is of the form ` pod.ansible.fabric8.io/$HOSTNAME: $PODNAME`
+
 
 ### Simulating multiple pods
 

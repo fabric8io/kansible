@@ -215,8 +215,8 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 	if len(command) == 0 {
 		return nil, fmt.Errorf("No environemnt variable value defined for %s in ReplicationController YAML file %s", EnvCommand, rcFile)
 	}
-	volumeName := "playbook-volume"
-	k8s.EnsurePodSpecHasGitVolume(podSpec, volumeName, gitURL, "master")
+	volumeName := "playbook"
+	k8s.EnsurePodSpecHasGitVolume(podSpec, volumeName, gitURL, "")
 	k8s.EnsureContainerHasGitVolumeMount(container, volumeName, PlaybookVolumeMount)
 
 	hostEntries, err := LoadHostEntries(inventoryFile, hosts)
