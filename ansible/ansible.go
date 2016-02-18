@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"net"
 	"os"
 	"math/rand"
 	"strings"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/fabric8io/gosupervise/log"
 	"github.com/fabric8io/gosupervise/k8s"
+	"strconv"
 )
 
 const (
@@ -24,8 +27,11 @@ const (
 // HostInventoryAnnotation is the list of hosts from the inventory
 	HostInventoryAnnotation = "ansible.fabric8.io/host-inventory"
 
-// HostAnnotation is used to annotate a pod with the host name its processing
-	HostAnnotation = "ansible.fabric8.io/host"
+// HostNameAnnotation is used to annotate a pod with the host name its processing
+	HostNameAnnotation = "ansible.fabric8.io/host-name"
+
+// HostAddressAnnotation is used to annotate a pod with the host address its processing
+	HostAddressAnnotation = "ansible.fabric8.io/host-address"
 
 // EnvHosts is the environment variable on a pod for specifying the Ansible hosts in the inventory
 	EnvHosts = "GOSUPERVISE_HOSTS"
@@ -244,20 +250,85 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 				if metadata.Annotations == nil {
 					metadata.Annotations = make(map[string]string)
 				}
+/*
 				if metadata.Labels == nil {
 					metadata.Labels = make(map[string]string)
 				}
 				metadata.Labels["host"] = pickedEntry.Name
-				metadata.Annotations[HostAnnotation] = pickedEntry.Host
-				_, err = podClient.Update(pod)
+*/
+				metadata.Annotations[HostNameAnnotation] = pickedEntry.Name
+				metadata.Annotations[HostAddressAnnotation] = pickedEntry.Host
+				//pod.Status = api.PodStatus{}
+				_, err = podClient.UpdateStatus(pod)
 				if err != nil {
 					return pickedEntry, err
 				}
-				return pickedEntry, nil
+				err = forwardPorts(pod, pickedEntry)
+				return pickedEntry, err
 			}
 		}
 	}
 	return nil, fmt.Errorf("Could not find any hosts for inventory file %s and hosts %s", inventoryFile, hosts)
+}
+
+// forwardPorts forwards any ports that are defined in the PodSpec to the host
+func forwardPorts(pod *api.Pod, hostEntry *HostEntry) error {
+	podSpec := pod.Spec
+	host := hostEntry.Host
+	for _, container := range podSpec.Containers {
+		for _, port := range container.Ports {
+			name := port.Name
+			portNum := port.ContainerPort
+			if portNum > 0 {
+				address := "localhost:" + strconv.Itoa(portNum)
+				forwardAddress := host + ":" + strconv.Itoa(portNum)
+				err := forwardPortLoop(name, address, forwardAddress)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func forwardPortLoop(name string, address string, forwardAddress string) error {
+	log.Info("forwarding port %s %s => %s", name, address, forwardAddress)
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return err
+	}
+
+	log.Info("About to start the acceptor goroutine!")
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				log.Err("Failed to accept listener: %v", err)
+			}
+			log.Info("Accepted connection %v\n", conn)
+			go forwardPort(conn, forwardAddress)
+		}
+	}()
+	return nil
+}
+
+func forwardPort(conn net.Conn, address string) {
+	client, err := net.Dial("tcp", address)
+	if err != nil {
+		log.Err("Dial failed: %v", err)
+	}
+	log.Info("Connected to localhost %v\n", conn)
+	go func() {
+		defer client.Close()
+		defer conn.Close()
+		io.Copy(client, conn)
+	}()
+	go func() {
+		defer client.Close()
+		defer conn.Close()
+		io.Copy(conn, client)
+	}()
 }
 
 // UpdateAnsibleRC reads the Ansible inventory and the RC for the supervisor and updates it in Kubernetes

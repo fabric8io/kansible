@@ -36,8 +36,7 @@ gosupervise pod somehosts somecommand
 
 ```
 
-
-### Trying it out
+### Running GoSupervise
   
 To try out running one of the example Ansible provisioned apps try the following:
 
@@ -49,32 +48,6 @@ The following examples use these files:
 * `inventory` is the Ansible inventory file used unless you specify the `--inventory` command line option
 * `rc.yml` is the Replication Controller configuration used for the supervisor pods unless you specify the `--rc` command line option
 
-### [fabric8-ansible-hawtapp](https://github.com/fabric8io/fabric8-ansible-hawtapp)
-
-type the following to setup the VMs and provision things with Ansible
-
-```
-    git clone https://github.com/fabric8io/fabric8-ansible-hawtapp.git
-    cd fabric8-ansible-hawtapp
-    vagrant up
-    ansible-playbook -i inventory provisioning/site.yml -vv
-```
-    
-Now to setup the Replication Controller for the supervisors run the following, where `appservers` is the hosts from the inventory
-
-```    
-    gosupervise rc appservers
-```      
-
-The pods should now start up for each host in the inventory!
-
-If you wish to run the supervisor pod locally on one of the hosts run:
-    
-```    
-    gosupervise pod -rc hawtapp-demo appservers /opt/cdi-camel-2.2.98-SNAPSHOT-app/bin/run.sh
-```      
-
-To try using windows machines, replace `appservers` with `winboxes` in the above commands; assuming you have created the [Windows vagrant machine](https://github.com/fabric8io/fabric8-ansible-hawtapp/tree/master/windows) locally
  
 #### for [fabric8-ansible-spring-boot](https://github.com/fabric8io/fabric8-ansible-spring-boot)
 
@@ -95,11 +68,28 @@ Now to setup the Replication Controller for the supervisors run the following, w
 
 The pods should now start up for each host in the inventory!
 
-To run the supervisor pod locally on one of the hosts run:
+
+### [fabric8-ansible-hawtapp](https://github.com/fabric8io/fabric8-ansible-hawtapp)
+
+type the following to setup the VMs and provision things with Ansible
+
+```
+    git clone https://github.com/fabric8io/fabric8-ansible-hawtapp.git
+    cd fabric8-ansible-hawtapp
+    vagrant up
+    ansible-playbook -i inventory provisioning/site.yml -vv
+```
     
+Now to setup the Replication Controller for the supervisors run the following, where `appservers` is the hosts from the inventory
+
 ```    
-    gosupervise pod  -rc springboot-demo appservers /opt/springboot-camel-2.2.98-SNAPSHOT
+    gosupervise rc appservers
 ```      
+
+The pods should now start up for each host in the inventory!
+
+To try using windows machines, replace `appservers` with `winboxes` in the above commands; assuming you have created the [Windows vagrant machine](https://github.com/fabric8io/fabric8-ansible-hawtapp/tree/master/windows) locally
+
 
 ### Checking the runtime status of the supervisors
  
@@ -120,18 +110,6 @@ The output is of the format:
 
 Where the output is of the form ` pod.ansible.fabric8.io/$HOSTNAME: $PODNAME`
 
-
-### Simulating multiple pods
-
-When working on the code outside of Kubernetes its useful to simulate running pods. To do this just set the `HOSTNAME` environment variable to the pod name you wish to use:
-
-```
-    export HOSTNAME=supervisor-znuj5
-```
-
-This lets you pretend to be different pods from the command line when trying it out locally. e.g. run the `gosupervise pod ...` command in 2 shells as different pods.
-
-Note that supervise pod checks all pods are still running and un-allocates dead pods; so you might want to cheat and use an existing pod name for your `HOSTNAME` to test out how multiple pods grab hosts etc.
 
 
  
@@ -156,6 +134,37 @@ Note that supervise pod checks all pods are still running and un-allocates dead 
  ```    
      ./bin/gosupervise
  ```
+
+## Running pods locally
+
+You can run `gosupervise rc ...` easily on a local build when working on the code. However to try out changes to the pod for `gosupervise pod ...` you can run that locally outside of docker with a small trick.
+
+You must set the `HOSTNAME` environment variable to a valid pod name you wish to use.
+
+```
+    export HOSTNAME=fabric8-znuj5
+```
+
+e.g. the above uses the pod name for the current fabric8 console.
+
+This lets you pretend to be different pods from the command line when trying it out locally. e.g. run the `gosupervise pod ...` command in 2 shells as different pods, provided the `HOSTNAME` values are diferent.
+
+The pod name must be valid as `gosupervise pod ...` command will update the pod to annotate which host its chosen etc.
+
+So to run the [above examples](#running-gosupervise) type the following:
+
+for [fabric8-ansible-spring-boot](https://github.com/fabric8io/fabric8-ansible-spring-boot):
+    
+```    
+    gosupervise pod -rc hawtapp-demo appservers /opt/cdi-camel-2.2.98-SNAPSHOT-app/bin/run.sh
+```      
+
+for [fabric8-ansible-hawtapp](https://github.com/fabric8io/fabric8-ansible-hawtapp):
+
+```    
+    gosupervise pod  -rc springboot-demo appservers /opt/springboot-camel-2.2.98-SNAPSHOT
+```      
+
 
 ## License
 
