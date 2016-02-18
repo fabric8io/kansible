@@ -244,13 +244,19 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 	}
 
 	// merge the RC configuration to allow configuration
+	originalReplicas := rc.Spec.Replicas
 	rc.Spec = rcConfig.Spec
 
 	metadata := rc.ObjectMeta
 	resourceVersion := metadata.ResourceVersion
 	annotations := metadata.Annotations
 	rcSpec := &rc.Spec
-	rcSpec.Replicas = len(hostEntries)
+	hostCount := len(hostEntries)
+	replicas := originalReplicas
+	if replicas == 0 || replicas > hostCount {
+		replicas = hostCount
+	}
+	rcSpec.Replicas = replicas
 
 	log.Info("found RC with name %s and version %s and replicas %d", rcName, resourceVersion, rcSpec.Replicas)
 
