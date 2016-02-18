@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"math/rand"
 	"strings"
@@ -29,11 +30,30 @@ const (
 // EnvCommand is the environment variable on a pod for specifying the command to run on each host
 	EnvCommand = "GOSUPERVISE_COMMAND"
 
-// EnvCommand is the environment variable on a pod for the name of the ReplicationController
+// EnvRC is the environment variable on a pod for the name of the ReplicationController
 	EnvRC = "GOSUPERVISE_RC"
 
 // PlaybookVolumeMount is the volume mount point where the playbook is assumed to be in the supervisor pod
 	PlaybookVolumeMount = "/playbook"
+
+
+// AnsibleVariableHost is the Ansible inventory host variable for the SSH host
+	AnsibleVariableHost = "ansible_ssh_host"
+
+// AnsibleVariableUser is the Ansible inventory host variable for the SSH user
+	AnsibleVariableUser = "ansible_ssh_user"
+
+// AnsibleVariablePort is the Ansible inventory host variable for the SSH port
+	AnsibleVariablePort = "ansible_port"
+
+// AnsibleVariablePrivateKey is the Ansible inventory host variable for the private key file
+	AnsibleVariablePrivateKey = "ansible_ssh_private_key_file"
+
+// AnsibleVariableWinRM is the Ansible inventory host variable for if WinRM should be used instead of SSH
+	AnsibleVariableWinRM = "winrm"
+
+// AnsibleVariablePassword is the Ansible inventory host variable for the password
+	AnsibleVariablePassword = "ansible_ssh_pass"
 
 	gitURLPrefix = "url = "
 	gitConfig = ".git/config"
@@ -51,18 +71,17 @@ type HostEntry struct {
 }
 
 // LoadHostEntries loads the Ansible inventory for a given hosts string value
-func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, string, error) {
+func LoadHostEntries(inventoryFile string, hosts string) ([]*HostEntry, error) {
 	file, err := os.Open(inventoryFile)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	defer file.Close()
 
-	hostEntries := []HostEntry{}
+	hostEntries := []*HostEntry{}
 	hostsLine := "[" + hosts + "]"
 	foundHeader := false
 	scanner := bufio.NewScanner(file)
-	var buffer bytes.Buffer
 	for scanner.Scan() {
 		text := strings.TrimSpace(scanner.Text())
 		if len(text) > 0 {
@@ -72,9 +91,7 @@ func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, string, e
 				} else {
 					hostEntry := parseHostEntry(text)
 					if hostEntry != nil {
-						hostEntries = append(hostEntries, *hostEntry)
-						buffer.WriteString(text)
-						buffer.WriteString("\n")
+						hostEntries = append(hostEntries, hostEntry)
 					}
 				}
 			} else if text == hostsLine {
@@ -83,23 +100,24 @@ func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, string, e
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return hostEntries, buffer.String(), nil
+	return hostEntries, nil
 }
+
 
 
 // LoadHostEntriesFromText loads the host entries from the given text which is typically taken from
 // an annotation on the ReplicationController
-func LoadHostEntriesFromText(text string) ([]HostEntry, error) {
-	hostEntries := []HostEntry{}
+func LoadHostEntriesFromText(text string) ([]*HostEntry, error) {
+	hostEntries := []*HostEntry{}
 	lines := strings.Split(text, "\n")
 	for _, line := range lines {
 		text := strings.TrimSpace(line)
 		if len(text) > 0 {
 			hostEntry := parseHostEntry(text)
 			if hostEntry != nil {
-				hostEntries = append(hostEntries, *hostEntry)
+				hostEntries = append(hostEntries, hostEntry)
 			}
 		}
 	}
@@ -208,7 +226,7 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 				log.Info("Failed to update the RC, could be concurrent update failure: %s", err)
 			} else {
 				log.Info("Picked host " + pickedEntry.Host)
-				return &pickedEntry, nil
+				return pickedEntry, nil
 			}
 		}
 	}
@@ -223,6 +241,7 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 		return nil, err
 	}
 	rcName := rcConfig.ObjectMeta.Name
+	podSpec := k8s.GetOrCreatePodSpec(rcConfig)
 	container := k8s.GetFirstContainerOrCreate(rcConfig)
 	if len(container.Image) == 0 {
 		container.Image = "fabric8/gosupervise"
@@ -240,7 +259,7 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 		return nil, fmt.Errorf("No environemnt variable value defined for %s in ReplicationController YAML file %s", EnvCommand, rcFile)
 	}
 
-	hostEntries, text, err := LoadHostEntries(inventoryFile, hosts)
+	hostEntries, err := LoadHostEntries(inventoryFile, hosts)
 	if err != nil {
 		return nil, err
 	}
@@ -277,6 +296,13 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 	}
 	rcSpec.Replicas = replicas
 
+	err = generatePrivateKeySecrets(c, ns, hostEntries, rc, podSpec, container)
+	if err != nil {
+		return rc, err
+	}
+
+	text := HostEntriesToString(hostEntries)
+	log.Info("Host entries text is now `%s`", text)
 	annotations[HostInventoryAnnotation] = text
 
 	log.Info("found RC with name %s and version %s and replicas %d", rcName, resourceVersion, rcSpec.Replicas)
@@ -294,6 +320,58 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 		return nil, err
 	}
 	return rc, nil
+}
+
+func generatePrivateKeySecrets(c *client.Client, ns string, hostEntries []*HostEntry, rc *api.ReplicationController, podSpec *api.PodSpec, container *api.Container) error {
+	secrets := map[string]string{}
+	rcName := rc.ObjectMeta.Name
+
+	for _, hostEntry := range hostEntries {
+		privateKey := hostEntry.PrivateKey
+		if len(privateKey) != 0 {
+			volumeMount := secrets[privateKey]
+			if len(volumeMount) == 0 {
+				buffer, err := ioutil.ReadFile(privateKey)
+				if err != nil {
+					return err
+				}
+				hostName := hostEntry.Name
+				secretName := rcName + "-" + hostName
+				keyName := "sshkey"
+				secret := &api.Secret{
+					ObjectMeta: api.ObjectMeta{
+						Name: secretName,
+						Labels: rc.ObjectMeta.Labels,
+					},
+					Data: map[string][]byte{
+						keyName: buffer,
+					},
+				}
+
+				// lets create or update the secret
+				secretClient := c.Secrets(ns);
+				current, err := secretClient.Get(secretName)
+				if err != nil || current == nil {
+					_, err = secretClient.Create(secret)
+				} else {
+					_, err = secretClient.Update(secret)
+				}
+				if err != nil {
+					return err
+				}
+
+				volumeMount = "/secrets/" + hostName
+				secrets[privateKey] = volumeMount
+				hostEntry.PrivateKey = volumeMount + "/" + keyName
+
+				// lets add the volume mapping to the container
+				secretVolumeName := "secret-" + hostName
+				k8s.EnsurePodSpecHasSecretVolume(podSpec, secretVolumeName, secretName)
+				k8s.EnsureContainerHasVolumeMount(container, secretVolumeName, volumeMount)
+			}
+		}
+	}
+	return nil
 }
 
 func findGitURL() (string, error) {
@@ -317,7 +395,7 @@ func findGitURL() (string, error) {
 }
 
 
-func removeHostEntry(hostEntries []HostEntry, name string) []HostEntry {
+func removeHostEntry(hostEntries []*HostEntry, name string) []*HostEntry {
 	for i, entry := range hostEntries {
 		if entry.Name == name {
 			if i < len(hostEntries) - 1 {
@@ -330,17 +408,17 @@ func removeHostEntry(hostEntries []HostEntry, name string) []HostEntry {
 	return hostEntries
 }
 
-func getHostEntryByName(hostEntries []HostEntry, name string) *HostEntry {
+func getHostEntryByName(hostEntries []*HostEntry, name string) *HostEntry {
 	for _, entry := range hostEntries {
 		if entry.Name == name {
-			return &entry
+			return entry
 		}
 	}
 	return nil
 }
 
 
-func deletePodsForOldHosts(c *client.Client, ns string, annotations map[string]string, pods *api.PodList, hostEntries []HostEntry) {
+func deletePodsForOldHosts(c *client.Client, ns string, annotations map[string]string, pods *api.PodList, hostEntries []*HostEntry) {
 	for annKey, podName := range annotations {
 		if strings.HasPrefix(annKey, AnsibleHostPodAnnotationPrefix) {
 			hostName := annKey[len(AnsibleHostPodAnnotationPrefix):]
@@ -361,6 +439,62 @@ func random(min, max int) int {
 	return rand.Intn(max - min) + min
 }
 
+// HostEntriesToString generates the Ansible inventory text for the host entries
+func HostEntriesToString(hostEntries []*HostEntry) string {
+	var buffer bytes.Buffer
+	for _, hostEntry := range hostEntries {
+		hostEntry.write(&buffer)
+		buffer.WriteString("\n")
+	}
+	return buffer.String()
+}
+
+func (hostEntry HostEntry) write(buffer *bytes.Buffer) {
+	buffer.WriteString(hostEntry.Name)
+	host := hostEntry.Host
+	if len(host) > 0 {
+		buffer.WriteString(" ")
+		buffer.WriteString(AnsibleVariableHost)
+		buffer.WriteString("=")
+		buffer.WriteString(host)
+	}
+	pk := hostEntry.PrivateKey
+	if len(pk) > 0 {
+		buffer.WriteString(" ")
+		buffer.WriteString(AnsibleVariablePrivateKey)
+		buffer.WriteString("=")
+		buffer.WriteString(pk)
+	}
+	password := hostEntry.Password
+	if len(password) > 0 {
+		buffer.WriteString(" ")
+		buffer.WriteString(AnsibleVariablePassword)
+		buffer.WriteString("=")
+		buffer.WriteString(password)
+	}
+	port := hostEntry.Port
+	if len(port) > 0 {
+		buffer.WriteString(" ")
+		buffer.WriteString(AnsibleVariablePort)
+		buffer.WriteString("=")
+		buffer.WriteString(port)
+	}
+	user := hostEntry.User
+	if len(user) > 0 {
+		buffer.WriteString(" ")
+		buffer.WriteString(AnsibleVariableUser)
+		buffer.WriteString("=")
+		buffer.WriteString(user)
+	}
+	useWinRM := hostEntry.UseWinRM
+	if useWinRM {
+		buffer.WriteString(" ")
+		buffer.WriteString(AnsibleVariableWinRM)
+		buffer.WriteString("=true")
+	}
+}
+
+
 func parseHostEntry(text string) *HostEntry {
 	values := strings.Split(text, " ")
 	name := ""
@@ -380,17 +514,17 @@ func parseHostEntry(text string) *HostEntry {
 			if len(params) == 2 {
 				paramValue := params[1]
 				switch (params[0]) {
-				case "ansible_ssh_host":
+				case AnsibleVariableHost:
 					host = paramValue
-				case "ansible_ssh_user":
+				case AnsibleVariableUser:
 					user = paramValue
-				case "ansible_port":
+				case AnsibleVariablePort:
 					port = paramValue
-				case "ansible_ssh_private_key_file":
+				case AnsibleVariablePrivateKey:
 					privateKey = paramValue
-				case "winrm":
+				case AnsibleVariableWinRM:
 					useWinRM = paramValue == "true"
-				case "ansible_ssh_pass":
+				case AnsibleVariablePassword:
 					password = paramValue
 				}
 			}

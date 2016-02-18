@@ -106,9 +106,9 @@ func EnsureContainerHasEnvVar(container *api.Container, name string, value strin
 	return false
 }
 
-// EnsureContainerHasGitVolumeMount ensures that there is a volume mount of the given name with the given values
+// EnsureContainerHasVolumeMount ensures that there is a volume mount of the given name with the given values
 // Returns true if there was already a volume mount
-func EnsureContainerHasGitVolumeMount(container *api.Container, name string, mountPath string) bool {
+func EnsureContainerHasVolumeMount(container *api.Container, name string, mountPath string) bool {
 	for _, vm := range container.VolumeMounts {
 		if vm.Name == name {
 			vm.MountPath = mountPath
@@ -121,6 +121,7 @@ func EnsureContainerHasGitVolumeMount(container *api.Container, name string, mou
 	})
 	return false
 }
+
 
 // EnsurePodSpecHasGitVolume ensures that there is a volume with the given name and git repo and revision
 func EnsurePodSpecHasGitVolume(podSpec *api.PodSpec, name string, gitRepo string, gitRevision string) bool {
@@ -139,6 +140,28 @@ func EnsurePodSpecHasGitVolume(podSpec *api.PodSpec, name string, gitRepo string
 			GitRepo: &api.GitRepoVolumeSource{
 				Repository: gitRepo,
 				Revision: gitRevision,
+			},
+		},
+	})
+	return false
+}
+
+
+// EnsurePodSpecHasSecretVolume ensures that there is a volume with the given name and secret
+func EnsurePodSpecHasSecretVolume(podSpec *api.PodSpec, name string, secretName string) bool {
+	for _, vm := range podSpec.Volumes {
+		if vm.Name == name {
+			vm.Secret = &api.SecretVolumeSource{
+				SecretName: secretName,
+			}
+			return true
+		}
+	}
+	podSpec.Volumes = append(podSpec.Volumes, api.Volume{
+		Name: name,
+		VolumeSource: api.VolumeSource{
+			Secret: &api.SecretVolumeSource{
+				SecretName: secretName,
 			},
 		},
 	})
