@@ -13,11 +13,11 @@ You can configure Windows machines using the `winrm=true` property in the invent
 
 ```yaml
 [winboxes]
-windows1 ansible_ssh_host=localhost ansible_port=5985 ansible_ssh_user=foo ansible_ssh_pass=somepasswd! winrm=true
+windows1 ansible_host=localhost ansible_port=5985 ansible_user=foo ansible_pass=somepasswd! winrm=true
 
 [unixes]
-app1 ansible_ssh_host=10.10.3.20 ansible_ssh_user=vagrant ansible_ssh_private_key_file=.vagrant/machines/app1/virtualbox/private_key
-app2 ansible_ssh_host=10.10.3.21 ansible_ssh_user=vagrant ansible_ssh_private_key_file=.vagrant/machines/app2/virtualbox/private_key
+app1 ansible_host=10.10.3.20 ansible_user=vagrant ansible_ssh_private_key_file=.vagrant/machines/app1/virtualbox/private_key
+app2 ansible_host=10.10.3.21 ansible_user=vagrant ansible_ssh_private_key_file=.vagrant/machines/app2/virtualbox/private_key
 ```
 
 You can also enable WinRM via the `--winrm` command line flag: 

@@ -50,23 +50,23 @@ const (
 	PlaybookVolumeMount = "/playbook"
 
 
-// AnsibleVariableHost is the Ansible inventory host variable for the SSH host
-	AnsibleVariableHost = "ansible_ssh_host"
+// AnsibleVariableHost is the Ansible inventory host variable for the remote host
+	AnsibleVariableHost = "ansible_host"
 
-// AnsibleVariableUser is the Ansible inventory host variable for the SSH user
-	AnsibleVariableUser = "ansible_ssh_user"
+// AnsibleVariableUser is the Ansible inventory host variable for the remote user
+	AnsibleVariableUser = "ansible_user"
 
-// AnsibleVariablePort is the Ansible inventory host variable for the SSH port
+// AnsibleVariablePort is the Ansible inventory host variable for the reote port
 	AnsibleVariablePort = "ansible_port"
 
-// AnsibleVariablePrivateKey is the Ansible inventory host variable for the private key file
+// AnsibleVariablePrivateKey is the Ansible inventory host variable for the SSH private key file
 	AnsibleVariablePrivateKey = "ansible_ssh_private_key_file"
 
 // AnsibleVariableWinRM is the Ansible inventory host variable for if WinRM should be used instead of SSH
 	AnsibleVariableWinRM = "winrm"
 
 // AnsibleVariablePassword is the Ansible inventory host variable for the password
-	AnsibleVariablePassword = "ansible_ssh_pass"
+	AnsibleVariablePassword = "ansible_pass"
 
 	gitURLPrefix = "url = "
 	gitConfig = ".git/config"
