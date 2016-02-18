@@ -100,7 +100,7 @@ func LoadHostEntries(inventoryFile string, hosts string) ([]*HostEntry, error) {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		text := strings.TrimSpace(scanner.Text())
-		if len(text) > 0 {
+		if len(text) > 0 && !strings.HasPrefix(text, "#") {
 			if (foundHeader) {
 				if text[0] == '[' {
 					break
@@ -130,7 +130,7 @@ func LoadHostEntriesFromText(text string) ([]*HostEntry, error) {
 	lines := strings.Split(text, "\n")
 	for _, line := range lines {
 		text := strings.TrimSpace(line)
-		if len(text) > 0 {
+		if len(text) > 0 && !strings.HasPrefix(text, "#") {
 			hostEntry := parseHostEntry(text)
 			if hostEntry != nil {
 				hostEntries = append(hostEntries, hostEntry)
@@ -617,6 +617,7 @@ func (hostEntry HostEntry) write(buffer *bytes.Buffer) {
 	if len(connection) > 0 {
 		buffer.WriteString(" ")
 		buffer.WriteString(AnsibleVariableConnection)
+		buffer.WriteString("=")
 		buffer.WriteString(connection)
 	}
 }

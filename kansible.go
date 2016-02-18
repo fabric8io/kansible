@@ -87,7 +87,6 @@ running inside Docker inside Kubernetes.
 				},
 				cli.StringFlag{
 					Name:   "connection",
-					Value:  "$KANSIBLE_CONNECTION",
 					Usage:  "The Ansible connection type to use. Defaults to SSH unless 'winrm' is defined to use WinRM on Windows",
 				},
 				cli.StringFlag{
@@ -149,7 +148,6 @@ running inside Docker inside Kubernetes.
 				},
 				cli.StringFlag{
 					Name:   "connection",
-					Value:  "$KANSIBLE_CONNECTION",
 					Usage:  "The Ansible connection type to use. Defaults to SSH unless 'winrm' is defined to use WinRM on Windows",
 				},
 			},
@@ -276,7 +274,7 @@ func runAnsiblePod(c *cli.Context) {
 
 	connection := hostEntry.Connection
 	if len(connection) == 0 {
-		connection = c.String("connection")
+		connection = osExpand(c, "connection")
 	}
 
 	bash := osExpand(c, "bash")
@@ -287,6 +285,7 @@ func runAnsiblePod(c *cli.Context) {
 		}
 	}
 
+	log.Info("using connection %s", connection)
 	if connection == ansible.ConnectionWinRM {
 		log.Info("Using WinRM to connect to the hosts %s", hosts)
 		password := hostEntry.Password

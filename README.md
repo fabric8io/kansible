@@ -2,6 +2,10 @@
 
 Orchestrate processes with Kubernetes and Ansible for cases where you have not yet dockerized your processes, or your process currently needs to run on Windows, AIX, Solaris or HP-UX or an old Linux distro that predates docker
 
+### Overview
+
+Kansible is a simple small tool for orchestrating your processes outside of Docker in the same way as you orchestate all your containers inside Kubernetes.
+
 ### Running Kansible
   
 To try out running one of the example Ansible provisioned apps try the following:
