@@ -2,6 +2,7 @@ package ansible
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"math/rand"
@@ -16,16 +17,22 @@ import (
 )
 
 const (
-	// AnsibleHostPodAnnotationPrefix is the annotation prefix used on the RC to associate a host name with a pod name
+// AnsibleHostPodAnnotationPrefix is the annotation prefix used on the RC to associate a host name with a pod name
 	AnsibleHostPodAnnotationPrefix = "pod.ansible.fabric8.io/"
 
-	// EnvHosts is the environment variable on a pod for specifying the Ansible hosts in the inventory
+// HostInventoryAnnotation is the list of hosts from the inventory
+	HostInventoryAnnotation = "ansible.fabric8.io/host-inventory"
+
+// EnvHosts is the environment variable on a pod for specifying the Ansible hosts in the inventory
 	EnvHosts = "GOSUPERVISE_HOSTS"
 
-	// EnvCommand is the environment variable on a pod for specifying the command to run on each host
+// EnvCommand is the environment variable on a pod for specifying the command to run on each host
 	EnvCommand = "GOSUPERVISE_COMMAND"
 
-	// PlaybookVolumeMount is the volume mount point where the playbook is assumed to be in the supervisor pod
+// EnvCommand is the environment variable on a pod for the name of the ReplicationController
+	EnvRC = "GOSUPERVISE_RC"
+
+// PlaybookVolumeMount is the volume mount point where the playbook is assumed to be in the supervisor pod
 	PlaybookVolumeMount = "/playbook"
 
 	gitURLPrefix = "url = "
@@ -44,10 +51,10 @@ type HostEntry struct {
 }
 
 // LoadHostEntries loads the Ansible inventory for a given hosts string value
-func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, error) {
+func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, string, error) {
 	file, err := os.Open(inventoryFile)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer file.Close()
 
@@ -55,6 +62,7 @@ func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, error) {
 	hostsLine := "[" + hosts + "]"
 	foundHeader := false
 	scanner := bufio.NewScanner(file)
+	var buffer bytes.Buffer
 	for scanner.Scan() {
 		text := strings.TrimSpace(scanner.Text())
 		if len(text) > 0 {
@@ -65,6 +73,8 @@ func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, error) {
 					hostEntry := parseHostEntry(text)
 					if hostEntry != nil {
 						hostEntries = append(hostEntries, *hostEntry)
+						buffer.WriteString(text)
+						buffer.WriteString("\n")
 					}
 				}
 			} else if text == hostsLine {
@@ -73,7 +83,25 @@ func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	return hostEntries, buffer.String(), nil
+}
+
+
+// LoadHostEntriesFromText loads the host entries from the given text which is typically taken from
+// an annotation on the ReplicationController
+func LoadHostEntriesFromText(text string) ([]HostEntry, error) {
+	hostEntries := []HostEntry{}
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		text := strings.TrimSpace(line)
+		if len(text) > 0 {
+			hostEntry := parseHostEntry(text)
+			if hostEntry != nil {
+				hostEntries = append(hostEntries, *hostEntry)
+			}
+		}
 	}
 	return hostEntries, nil
 }
@@ -82,61 +110,66 @@ func LoadHostEntries(inventoryFile string, hosts string) ([]HostEntry, error) {
 // ChooseHostAndPrivateKey parses the given Ansible inventory file for the hosts
 // and chooses a single host inside it, returning the host name and the private key
 func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Client, ns string, rcName string) (*HostEntry, error) {
-	hostEntries, err := LoadHostEntries(inventoryFile, hosts)
-	if err != nil {
-		return nil, err
+	var err error
+	thisPodName := os.Getenv("HOSTNAME")
+	if len(thisPodName) == 0 {
+		thisPodName, err = os.Hostname()
+		if err != nil {
+			return nil, err
+		}
 	}
-	log.Info("Found %d host entries", len(hostEntries))
+	if len(thisPodName) == 0 {
+		return nil, fmt.Errorf("Could not find the pod name using $HOSTNAME!")
+	}
 
-	// lets pick a random entry
-	if len(hostEntries) > 0 {
-		thisPodName := os.Getenv("HOSTNAME")
-		if len(thisPodName) == 0 {
-			thisPodName, err = os.Hostname()
-			if err != nil {
-				return nil, err
-			}
+	retryAttempts := 20
+
+	for i := 0; i < retryAttempts; i++ {
+		if i > 0 {
+			// lets sleep before retrying
+			time.Sleep(time.Duration(random(1000, 20000)) * time.Millisecond)
 		}
-		if len(thisPodName) == 0 {
-			return nil, fmt.Errorf("Could not find the pod name using $HOSTNAME!")
+		if c == nil {
+			return nil, fmt.Errorf("No Kubernetes Client specified!")
+		}
+		rc, err := c.ReplicationControllers(ns).Get(rcName)
+		if err != nil {
+			return nil, err
+		}
+		if rc == nil {
+			return nil, fmt.Errorf("No ReplicationController found for name %s", rcName)
 		}
 
-		retryAttempts := 20
+		pods, err := c.Pods(ns).List(nil, nil)
+		if err != nil {
+			return nil, err
+		}
 
-		for i := 0; i < retryAttempts; i++ {
-			if i > 0 {
-				// lets sleep before retrying
-				time.Sleep(time.Duration(random(1000, 20000)) * time.Millisecond)
-			}
-			if c == nil {
-				return nil, fmt.Errorf("No Kubernetes Client specified!")
-			}
-			rc, err := c.ReplicationControllers(ns).Get(rcName)
-			if err != nil {
-				return nil, err
-			}
-			if rc == nil {
-				return nil, fmt.Errorf("No ReplicationController found for name %s", rcName)
-			}
 
-			pods, err := c.Pods(ns).List(nil, nil)
-			if err != nil {
-				return nil, err
-			}
+		metadata := &rc.ObjectMeta
+		resourceVersion := metadata.ResourceVersion
+		if metadata.Annotations == nil {
+			metadata.Annotations = make(map[string]string)
+		}
+		annotations := metadata.Annotations
+		log.Info("found RC with name %s.%s and version %s", ns, rcName, resourceVersion)
 
-			metadata := &rc.ObjectMeta
-			resourceVersion := metadata.ResourceVersion
-			if metadata.Annotations == nil {
-				metadata.Annotations = make(map[string]string)
-			}
-			annotations := metadata.Annotations
-			log.Info("found RC with name %s.%s and version %s", ns, rcName, resourceVersion)
+		hostsText := annotations[HostInventoryAnnotation]
+		if len(hostsText) == 0 {
+			return nil, fmt.Errorf("Could not find annotation %s on ReplicationController %s", HostInventoryAnnotation, rcName)
+		}
+		hostEntries, err := LoadHostEntriesFromText(hostsText)
+		if err != nil {
+			return nil, err
+		}
+		log.Info("Found %d host entries", len(hostEntries))
 
+		// lets pick a random entry
+		if len(hostEntries) > 0 {
 			filteredHostEntries := hostEntries
 			for annKey, podName := range annotations {
 				if strings.HasPrefix(annKey, AnsibleHostPodAnnotationPrefix) {
 					hostName := annKey[len(AnsibleHostPodAnnotationPrefix):]
-
 					if (k8s.PodIsRunning(pods, podName)) {
 						if podName != thisPodName {
 							log.Info("Pod %s podName has already claimed host %s", podName, hostName)
@@ -178,7 +211,6 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 				return &pickedEntry, nil
 			}
 		}
-
 	}
 	return nil, fmt.Errorf("Could not find any hosts for inventory file %s and hosts %s", inventoryFile, hosts)
 }
@@ -190,16 +222,7 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 	if err != nil {
 		return nil, err
 	}
-
-	gitURL, err := findGitURL()
-	if err != nil {
-		return nil, err
-	}
-	if len(gitURL) == 0 {
-		return nil, fmt.Errorf("Could not find git URL in git configu file %s", gitConfig)
-	}
-
-	podSpec := k8s.GetOrCreatePodSpec(rcConfig)
+	rcName := rcConfig.ObjectMeta.Name
 	container := k8s.GetFirstContainerOrCreate(rcConfig)
 	if len(container.Image) == 0 {
 		container.Image = "fabric8/gosupervise"
@@ -211,22 +234,18 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 		container.ImagePullPolicy = "IfNotPresent"
 	}
 	k8s.EnsureContainerHasEnvVar(container, EnvHosts, hosts)
+	k8s.EnsureContainerHasEnvVar(container, EnvRC, rcName)
 	command := k8s.GetContainerEnvVar(container, EnvCommand)
 	if len(command) == 0 {
 		return nil, fmt.Errorf("No environemnt variable value defined for %s in ReplicationController YAML file %s", EnvCommand, rcFile)
 	}
-	volumeName := "playbook"
-	k8s.EnsurePodSpecHasGitVolume(podSpec, volumeName, gitURL, "")
-	k8s.EnsureContainerHasGitVolumeMount(container, volumeName, PlaybookVolumeMount)
 
-	hostEntries, err := LoadHostEntries(inventoryFile, hosts)
+	hostEntries, text, err := LoadHostEntries(inventoryFile, hosts)
 	if err != nil {
 		return nil, err
 	}
 	log.Info("Found %d host entries in the Ansible inventory for %s", len(hostEntries), hosts)
-	log.Info("Using git URL %s", gitURL)
 
-	rcName := rcConfig.ObjectMeta.Name
 	isUpdate := true
 	rc, err := c.ReplicationControllers(ns).Get(rcName)
 	if err != nil {
@@ -257,6 +276,8 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 		replicas = hostCount
 	}
 	rcSpec.Replicas = replicas
+
+	annotations[HostInventoryAnnotation] = text
 
 	log.Info("found RC with name %s and version %s and replicas %d", rcName, resourceVersion, rcSpec.Replicas)
 

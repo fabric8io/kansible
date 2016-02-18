@@ -10,7 +10,6 @@ import (
 
 	"github.com/fabric8io/gosupervise/ansible"
 	"github.com/fabric8io/gosupervise/log"
-	"github.com/fabric8io/gosupervise/k8s"
 	"github.com/fabric8io/gosupervise/ssh"
 	"github.com/fabric8io/gosupervise/winrm"
 
@@ -77,8 +76,8 @@ running inside Docker inside Kubernetes.
 				},
 				cli.StringFlag{
 					Name:   "rc",
-					Value:  "rc.yml",
-					Usage:  "The YAML file of the ReplicationController for the supervisors",
+					Value:  "$GOSUPERVISE_RC",
+					Usage:  "The name of the ReplicationController for the supervisors",
 				},
 				cli.StringFlag{
 					Name:   "password",
@@ -241,22 +240,13 @@ func runAnsiblePod(c *cli.Context) {
 		ns = "default"
 	}
 
-	rcFile, err := osExpandAndVerify(c, "rc")
-	if err != nil {
-		fail(err)
-	}
-
 	inventory, err := osExpandAndVerify(c, "inventory")
 	if err != nil {
 		fail(err)
 	}
-	rc, err := k8s.ReadReplicationControllerFromFile(rcFile)
+	rcName, err := osExpandAndVerify(c, "rc")
 	if err != nil {
 		fail(err)
-	}
-	rcName := rc.ObjectMeta.Name
-	if len(rcName) == 0 {
-		log.Die("No ReplicationController name in the yaml file %s", rcFile)
 	}
 	hostEntry, err := ansible.ChooseHostAndPrivateKey(inventory, hosts, kubeclient, ns, rcName)
 	if err != nil {
