@@ -85,10 +85,10 @@ running inside Docker inside Kubernetes.
 					Value:  "$KANSIBLE_PASSWORD",
 					Usage:  "The password used for WinRM connections",
 				},
-				cli.BoolFlag{
-					Name:   "winrm",
-					EnvVar: "KANSIBLE_WINRM",
-					Usage:  "Enables the use of WinRM instead of SSH",
+				cli.StringFlag{
+					Name:   "connection",
+					Value:  "$KANSIBLE_CONNECTION",
+					Usage:  "The Ansible connection type to use. Defaults to SSH unless 'winrm' is defined to use WinRM on Windows",
 				},
 				cli.StringFlag{
 					Name:   "bash",
@@ -147,9 +147,10 @@ running inside Docker inside Kubernetes.
 					Name:   "password",
 					Usage:  "The password if using WinRM to execute the command",
 				},
-				cli.BoolFlag{
-					Name:   "winrm",
-					Usage:  "Enables the use of WinRM instead of SSH",
+				cli.StringFlag{
+					Name:   "connection",
+					Value:  "$KANSIBLE_CONNECTION",
+					Usage:  "The Ansible connection type to use. Defaults to SSH unless 'winrm' is defined to use WinRM on Windows",
 				},
 			},
 		},
@@ -273,17 +274,20 @@ func runAnsiblePod(c *cli.Context) {
 		fail(err)
 	}
 
-	useWinRM := c.Bool("winrm") || hostEntry.UseWinRM
+	connection := hostEntry.Connection
+	if len(connection) == 0 {
+		connection = c.String("connection")
+	}
 
 	bash := osExpand(c, "bash")
 	if len(bash) > 0 {
-		err = generateBashScript(bash, useWinRM)
+		err = generateBashScript(bash, connection)
 		if err != nil {
 			log.Err("Failed to generate bash script at %s due to: %v", bash, err)
 		}
 	}
 
-	if useWinRM {
+	if connection == ansible.ConnectionWinRM {
 		log.Info("Using WinRM to connect to the hosts %s", hosts)
 		password := hostEntry.Password
 		if len(password) == 0 {
@@ -302,9 +306,9 @@ func runAnsiblePod(c *cli.Context) {
 	}
 }
 
-func generateBashScript(file string, useWinRM bool) error {
+func generateBashScript(file string, connection string) error {
 	shellCommand := "bash"
-	if useWinRM {
+	if connection == ansible.ConnectionWinRM {
 		shellCommand = "PowerShell"
 	}
 	text :=  "#!/bin/sh\n" + "echo opening shell on remote machine...\n" + "kansible pod appservers " + shellCommand + "\n";
@@ -330,8 +334,8 @@ func run(c *cli.Context) {
 	if err != nil {
 		fail(err)
 	}
-	useWinRM := c.Bool("winrm")
-	if useWinRM {
+	connection := c.String("connection")
+	if connection == ansible.ConnectionWinRM {
 		password, err := osExpandAndVerify(c, "password")
 		if err != nil {
 			fail(err)

@@ -2,40 +2,6 @@
 
 Orchestrate processes with Kubernetes and Ansible for cases where you have not yet dockerized your processes, or your process currently needs to run on Windows, AIX, Solaris or HP-UX or an old Linux distro that predates docker
 
-### Configuring kansible
-
-The best way to configure if you want to connect via SSH for unix machines or WinRM for windows machines is via the Ansible Inventory.
-
-By default SSH is used on port 22 unless you specify `ansible_port` in the inventory or specify `--port` on the command line.
-
-You can configure Windows machines using the `winrm=true` property in the inventory:
-
-
-```yaml
-[winboxes]
-windows1 ansible_host=localhost ansible_port=5985 ansible_user=foo ansible_pass=somepasswd! winrm=true
-
-[unixes]
-app1 ansible_host=10.10.3.20 ansible_user=vagrant ansible_ssh_private_key_file=.vagrant/machines/app1/virtualbox/private_key
-app2 ansible_host=10.10.3.21 ansible_user=vagrant ansible_ssh_private_key_file=.vagrant/machines/app2/virtualbox/private_key
-```
-
-You can also enable WinRM via the `--winrm` command line flag: 
-
-```
-export KANSIBLE_WINRM=true
-kansible pod --winrm somehosts somecommand
-
-```
-
-or by setting the environment variable `KANSIBLE_WINRM` which is a little easier to configure on the RC YAML:
-
-```
-export KANSIBLE_WINRM=true
-kansible pod somehosts somecommand
-
-```
-
 ### Running Kansible
   
 To try out running one of the example Ansible provisioned apps try the following:
@@ -98,6 +64,40 @@ To try using windows machines, replace `appservers` with `winboxes` in the above
 
 Or you can add the windows machine into the `appservers` hosts section in the `inventory` file.
 
+
+### Configuring kansible
+
+The best way to configure if you want to connect via SSH for unix machines or WinRM for windows machines is via the Ansible Inventory.
+
+By default SSH is used on port 22 unless you specify `ansible_port` in the inventory or specify `--port` on the command line.
+
+You can configure Windows machines using the `ansible_connection=winrm` property in the inventory:
+
+
+```yaml
+[winboxes]
+windows1 ansible_host=localhost ansible_port=5985 ansible_user=foo ansible_pass=somepasswd! ansible_connection=winrm
+
+[unixes]
+app1 ansible_host=10.10.3.20 ansible_user=vagrant ansible_ssh_private_key_file=.vagrant/machines/app1/virtualbox/private_key
+app2 ansible_host=10.10.3.21 ansible_user=vagrant ansible_ssh_private_key_file=.vagrant/machines/app2/virtualbox/private_key
+```
+
+You can also enable WinRM via the `--winrm` command line flag: 
+
+```
+export KANSIBLE_WINRM=true
+kansible pod --winrm somehosts somecommand
+
+```
+
+or by setting the environment variable `KANSIBLE_WINRM` which is a little easier to configure on the RC YAML:
+
+```
+export KANSIBLE_WINRM=true
+kansible pod somehosts somecommand
+
+```
 ### Checking the runtime status of the supervisors
  
 To see which pods own which hosts run the following command:

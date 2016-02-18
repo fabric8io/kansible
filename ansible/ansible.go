@@ -62,11 +62,14 @@ const (
 // AnsibleVariablePrivateKey is the Ansible inventory host variable for the SSH private key file
 	AnsibleVariablePrivateKey = "ansible_ssh_private_key_file"
 
-// AnsibleVariableWinRM is the Ansible inventory host variable for if WinRM should be used instead of SSH
-	AnsibleVariableWinRM = "winrm"
+// AnsibleVariableConnection is the Ansible inventory host variable for the kind of connection; e.g. 'winrm' for windows
+	AnsibleVariableConnection = "ansible_connection"
 
 // AnsibleVariablePassword is the Ansible inventory host variable for the password
 	AnsibleVariablePassword = "ansible_pass"
+
+// ConnectionWinRM is the value AnsibleVariableConnection of for using Windows with WinRM
+	ConnectionWinRM = "winrm"
 
 	gitURLPrefix = "url = "
 	gitConfig = ".git/config"
@@ -79,7 +82,7 @@ type HostEntry struct {
 	Port       string
 	User       string
 	PrivateKey string
-	UseWinRM   bool
+	Connection string
 	Password   string
 }
 
@@ -610,11 +613,11 @@ func (hostEntry HostEntry) write(buffer *bytes.Buffer) {
 		buffer.WriteString("=")
 		buffer.WriteString(user)
 	}
-	useWinRM := hostEntry.UseWinRM
-	if useWinRM {
+	connection := hostEntry.Connection
+	if len(connection) > 0 {
 		buffer.WriteString(" ")
-		buffer.WriteString(AnsibleVariableWinRM)
-		buffer.WriteString("=true")
+		buffer.WriteString(AnsibleVariableConnection)
+		buffer.WriteString(connection)
 	}
 }
 
@@ -626,7 +629,7 @@ func parseHostEntry(text string) *HostEntry {
 	host := ""
 	port := ""
 	privateKey := ""
-	useWinRM := false
+	connection := ""
 	password := ""
 	count := len(values)
 	if count > 0 {
@@ -646,8 +649,8 @@ func parseHostEntry(text string) *HostEntry {
 					port = paramValue
 				case AnsibleVariablePrivateKey:
 					privateKey = paramValue
-				case AnsibleVariableWinRM:
-					useWinRM = paramValue == "true"
+				case AnsibleVariableConnection:
+					connection = paramValue
 				case AnsibleVariablePassword:
 					password = paramValue
 				}
@@ -665,7 +668,7 @@ func parseHostEntry(text string) *HostEntry {
 		Port: port,
 		User: user,
 		PrivateKey: privateKey,
-		UseWinRM: useWinRM,
+		Connection: connection,
 		Password: password,
 	}
 }
