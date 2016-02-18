@@ -15,8 +15,8 @@ import (
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/api"
 
-	"github.com/fabric8io/gosupervise/log"
-	"github.com/fabric8io/gosupervise/k8s"
+	"github.com/fabric8io/kansible/log"
+	"github.com/fabric8io/kansible/k8s"
 	"strconv"
 )
 
@@ -366,10 +366,10 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 
 	container := k8s.GetFirstContainerOrCreate(rcConfig)
 	if len(container.Image) == 0 {
-		container.Image = "fabric8/gosupervise"
+		container.Image = "fabric8/kansible"
 	}
 	if len(container.Name) == 0 {
-		container.Name = "gosupervise"
+		container.Name = "kansible"
 	}
 	if len(container.ImagePullPolicy) == 0 {
 		container.ImagePullPolicy = "IfNotPresent"

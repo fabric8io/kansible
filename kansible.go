@@ -9,10 +9,10 @@ import (
 
 	"github.com/codegangsta/cli"
 
-	"github.com/fabric8io/gosupervise/ansible"
-	"github.com/fabric8io/gosupervise/log"
-	"github.com/fabric8io/gosupervise/ssh"
-	"github.com/fabric8io/gosupervise/winrm"
+	"github.com/fabric8io/kansible/ansible"
+	"github.com/fabric8io/kansible/log"
+	"github.com/fabric8io/kansible/ssh"
+	"github.com/fabric8io/kansible/winrm"
 
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 )
@@ -26,8 +26,8 @@ var version = "0.1.0-unstable"
 
 func main() {
 	app := cli.NewApp()
-	app.Name = "gosupervise"
-	app.Usage = `Go Supervise
+	app.Name = "kansible"
+	app.Usage = `Kansible
 
 This command supervises a remote process inside a Pod inside Kubernetes to make
 it look and feel like legacy processes running outside of Kubernetes are really
@@ -77,22 +77,22 @@ running inside Docker inside Kubernetes.
 				},
 				cli.StringFlag{
 					Name:   "rc",
-					Value:  "$GOSUPERVISE_RC",
+					Value:  "$KANSIBLE_RC",
 					Usage:  "The name of the ReplicationController for the supervisors",
 				},
 				cli.StringFlag{
 					Name:   "password",
-					Value:  "$GOSUPERVISE_PASSWORD",
+					Value:  "$KANSIBLE_PASSWORD",
 					Usage:  "The password used for WinRM connections",
 				},
 				cli.BoolFlag{
 					Name:   "winrm",
-					EnvVar: "GOSUPERVISE_WINRM",
+					EnvVar: "KANSIBLE_WINRM",
 					Usage:  "Enables the use of WinRM instead of SSH",
 				},
 				cli.StringFlag{
 					Name:   "bash",
-					Value:  "$GOSUPERVISE_BASH",
+					Value:  "$KANSIBLE_BASH",
 					Usage:  "If specified a script is generated for running a bash like shell on the remote machine",
 				},
 			},
@@ -125,22 +125,22 @@ running inside Docker inside Kubernetes.
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:   "user",
-					Value:  "$GOSUPERVISE_USER",
+					Value:  "$KANSIBLE_USER",
 					Usage:  "The user to use on the remote connection",
 				},
 				cli.StringFlag{
 					Name:   "privatekey",
-					Value:  "$GOSUPERVISE_PRIVATEKEY",
+					Value:  "$KANSIBLE_PRIVATEKEY",
 					Usage:  "The private key used for SSH",
 				},
 				cli.StringFlag{
 					Name:   "host",
-					Value:  "$GOSUPERVISE_HOST",
+					Value:  "$KANSIBLE_HOST",
 					Usage:  "The host for the remote connection",
 				},
 				cli.StringFlag{
 					Name:   "command",
-					Value:  "$GOSUPERVISE_COMMAND",
+					Value:  "$KANSIBLE_COMMAND",
 					Usage:  "The remote command to invoke on the host",
 				},
 				cli.StringFlag{
@@ -307,7 +307,7 @@ func generateBashScript(file string, useWinRM bool) error {
 	if useWinRM {
 		shellCommand = "PowerShell"
 	}
-	text :=  "#!/bin/sh\n" + "echo opening shell on remote machine...\n" + "gosupervise pod appservers " + shellCommand + "\n";
+	text :=  "#!/bin/sh\n" + "echo opening shell on remote machine...\n" + "kansible pod appservers " + shellCommand + "\n";
 	return ioutil.WriteFile(file, []byte(text), 0555)
 }
 

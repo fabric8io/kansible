@@ -1,7 +1,7 @@
 #!/usr/bin/groovy
 node{
   stage 'canary release'
-  git 'https://github.com/fabric8io/gosupervise.git'
+  git 'https://github.com/fabric8io/kansible.git'
 
   kubernetes.pod('buildpod').withImage('fabric8/go-builder').withPrivileged(true)
       .withHostPathMount('/var/run/docker.sock','/var/run/docker.sock')
@@ -12,7 +12,7 @@ node{
     sh 'make bootstrap'
     sh "cd /go/src/workspace/${env.JOB_NAME} && make build"
 
-    def imageName = 'gosupervise'
+    def imageName = 'kansible'
     def newVersion = getNewVersion{}
 
     sh "docker build --rm -t ${imageName} ."

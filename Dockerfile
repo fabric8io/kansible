@@ -2,8 +2,8 @@ FROM centos:7
 
 WORKDIR /playbook
 
-ENV PATH $PATH:/usr/local/gosupervise/
+ENV PATH $PATH:/usr/local/kansible/
 
-ADD ./bin/gosupervise /usr/local/gosupervise/
+ADD ./bin/kansible /usr/local/kansible/
 
-CMD gosupervise pod $GOSUPERVISE_HOSTS $GOSUPERVISE_COMMAND
+CMD kansible pod $KANSIBLE_HOSTS $KANSIBLE_COMMAND

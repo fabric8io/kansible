@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"golang.org/x/crypto/ssh"
-	"github.com/fabric8io/gosupervise/log"
+	"github.com/fabric8io/kansible/log"
 )
 
 // RemoteSshCommand invokes the given command on a host and port

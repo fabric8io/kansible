@@ -1,8 +1,8 @@
-# Go Supervise
+# Kansible
 
 Orchestrate processes with Kubernetes and Ansible for cases where you have not yet dockerized your processes, or your process currently needs to run on Windows, AIX, Solaris or HP-UX or an old Linux distro that predates docker
 
-### Configuring gosupervise
+### Configuring kansible
 
 The best way to configure if you want to connect via SSH for unix machines or WinRM for windows machines is via the Ansible Inventory.
 
@@ -23,25 +23,25 @@ app2 ansible_ssh_host=10.10.3.21 ansible_ssh_user=vagrant ansible_ssh_private_ke
 You can also enable WinRM via the `--winrm` command line flag: 
 
 ```
-export GOSUPERVISE_WINRM=true
-gosupervise pod --winrm somehosts somecommand
+export KANSIBLE_WINRM=true
+kansible pod --winrm somehosts somecommand
 
 ```
 
-or by setting the environment variable `GOSUPERVISE_WINRM` which is a little easier to configure on the RC YAML:
+or by setting the environment variable `KANSIBLE_WINRM` which is a little easier to configure on the RC YAML:
 
 ```
-export GOSUPERVISE_WINRM=true
-gosupervise pod somehosts somecommand
+export KANSIBLE_WINRM=true
+kansible pod somehosts somecommand
 
 ```
 
-### Running GoSupervise
+### Running Kansible
   
 To try out running one of the example Ansible provisioned apps try the following:
 
-* [Download a release](https://github.com/fabric8io/gosupervise/releases) and add `gosupervise` to your `$PATH` 
-* Or [Build gosupervise](https://github.com/fabric8io/gosupervise#building) then add the `$PWD/bin` folder to your `$PATH` so that you can type in `gosupervise` on the command line
+* [Download a release](https://github.com/fabric8io/kansible/releases) and add `kansible` to your `$PATH` 
+* Or [Build kansible](https://github.com/fabric8io/kansible#building) then add the `$PWD/bin` folder to your `$PATH` so that you can type in `kansible` on the command line
 
 The following examples use these files:
 
@@ -63,7 +63,7 @@ type the following to setup the VMs and provision things with Ansible
 Now to setup the Replication Controller for the supervisors run the following, where `appservers` is the hosts from the inventory
     
 ```    
-    gosupervise rc appservers
+    kansible rc appservers
 ```      
 
 The pods should now start up for each host in the inventory!
@@ -83,7 +83,7 @@ type the following to setup the VMs and provision things with Ansible
 Now to setup the Replication Controller for the supervisors run the following, where `appservers` is the hosts from the inventory
 
 ```    
-    gosupervise rc appservers
+    kansible rc appservers
 ```      
 
 The pods should now start up for each host in the inventory!
@@ -139,12 +139,12 @@ Where the output is of the form ` pod.ansible.fabric8.io/$HOSTNAME: $PODNAME`
  * you can then run it via
  
  ```    
-     ./bin/gosupervise
+     ./bin/kansible
  ```
 
 ## Running pods locally
 
-You can run `gosupervise rc ...` easily on a local build when working on the code. However to try out changes to the pod for `gosupervise pod ...` you can run that locally outside of docker with a small trick.
+You can run `kansible rc ...` easily on a local build when working on the code. However to try out changes to the pod for `kansible pod ...` you can run that locally outside of docker with a small trick.
 
 You must set the `HOSTNAME` environment variable to a valid pod name you wish to use.
 
@@ -154,22 +154,22 @@ You must set the `HOSTNAME` environment variable to a valid pod name you wish to
 
 e.g. the above uses the pod name for the current fabric8 console.
 
-This lets you pretend to be different pods from the command line when trying it out locally. e.g. run the `gosupervise pod ...` command in 2 shells as different pods, provided the `HOSTNAME` values are diferent.
+This lets you pretend to be different pods from the command line when trying it out locally. e.g. run the `kansible pod ...` command in 2 shells as different pods, provided the `HOSTNAME` values are diferent.
 
-The pod name must be valid as `gosupervise pod ...` command will update the pod to annotate which host its chosen etc.
+The pod name must be valid as `kansible pod ...` command will update the pod to annotate which host its chosen etc.
 
-So to run the [above examples](#running-gosupervise) type the following:
+So to run the [above examples](#running-kansible) type the following:
 
 for [fabric8-ansible-spring-boot](https://github.com/fabric8io/fabric8-ansible-spring-boot):
     
 ```    
-    gosupervise pod -rc hawtapp-demo appservers /opt/cdi-camel-2.2.98-SNAPSHOT-app/bin/run.sh
+    kansible pod -rc hawtapp-demo appservers /opt/cdi-camel-2.2.98-SNAPSHOT-app/bin/run.sh
 ```      
 
 for [fabric8-ansible-hawtapp](https://github.com/fabric8io/fabric8-ansible-hawtapp):
 
 ```    
-    gosupervise pod  -rc springboot-demo appservers /opt/springboot-camel-2.2.98-SNAPSHOT
+    kansible pod  -rc springboot-demo appservers /opt/springboot-camel-2.2.98-SNAPSHOT
 ```      
 
 

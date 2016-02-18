@@ -4,7 +4,7 @@ import(
 	"fmt"
 	"os"
 
-	"github.com/fabric8io/gosupervise/log"
+	"github.com/fabric8io/kansible/log"
 	"github.com/masterzen/winrm/winrm"
 	"strconv"
 )

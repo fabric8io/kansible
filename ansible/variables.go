@@ -6,7 +6,7 @@ import (
 
 	"github.com/ghodss/yaml"
 
-	"github.com/fabric8io/gosupervise/k8s"
+	"github.com/fabric8io/kansible/k8s"
 )
 
 const (

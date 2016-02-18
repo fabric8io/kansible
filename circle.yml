@@ -24,6 +24,6 @@ deployment:
     branch: master
     owner: fabric8io
     commands:
-      - docker build -t fabric8/gosupervise .
+      - docker build -t fabric8/kansible .
       - docker login -e $DOCKER_EMAIL -u $DOCKER_USER -p $DOCKER_PASS
-      - docker push fabric8/gosupervise
+      - docker push fabric8/kansible

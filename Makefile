@@ -2,7 +2,7 @@ ifndef GOPATH
 $(error No GOPATH set)
 endif
 
-NAME := gosupervise
+NAME := kansible
 VERSION := $(shell cat version/VERSION)
 
 GO_VERSION := $(shell go version)
@@ -21,8 +21,8 @@ XBUILDFLAGS := -ldflags \
 BIN_DIR := bin
 DIST_DIR := _dist
 GO_PACKAGES := ansible k8s log
-MAIN_GO := gosupervise.go
-GOSUPERVISE_BIN := $(BIN_DIR)/gosupervise
+MAIN_GO := kansible.go
+KANSIBLE_BIN := $(BIN_DIR)/kansible
 
 VERSION_PREFIX := $(shell git describe --tags --abbrev=0 2>/dev/null)
 
@@ -39,7 +39,7 @@ ifndef VERSION
 endif
 
 build: $(MAIN_GO)
-	go build -o $(GOSUPERVISE_BIN) -ldflags "-X main.version=${VERSION}" $<
+	go build -o $(KANSIBLE_BIN) -ldflags "-X main.version=${VERSION}" $<
 
 bootstrap:
 	go get -u github.com/golang/lint/golint github.com/mitchellh/gox
@@ -57,18 +57,18 @@ clean:
 
 dist: build-all
 	@cd $(DIST_DIR) && \
-	find * -type d -exec zip -jr gosupervise-$(VERSION)-{}.zip {} \; && \
+	find * -type d -exec zip -jr kansible-$(VERSION)-{}.zip {} \; && \
 	cd -
 
 install: build
 	install -d ${DESTDIR}/usr/local/bin/
-	install -m 755 $(GOSUPERVISE_BIN) ${DESTDIR}/usr/local/bin/gosupervise
+	install -m 755 $(KANSIBLE_BIN) ${DESTDIR}/usr/local/bin/kansible
 
 prep-bintray-json:
 # TRAVIS_TAG is set to the tag name if the build is a tag
 ifdef TRAVIS_TAG
 	@jq '.version.name |= "$(VERSION)"' _scripts/ci/bintray-template.json | \
-		jq '.package.repo |= "gosupervise"' > _scripts/ci/bintray-ci.json
+		jq '.package.repo |= "kansible"' > _scripts/ci/bintray-ci.json
 else
 	@jq '.version.name |= "$(VERSION)"' _scripts/ci/bintray-template.json \
 		> _scripts/ci/bintray-ci.json
@@ -88,7 +88,7 @@ test-style:
 		golint $$i; \
 	done
 	@for i in . $(GO_PACKAGES); do \
-		go vet github.com/fabric8io/gosupervise/$$i; \
+		go vet github.com/fabric8io/kansible/$$i; \
 	done
 
 
