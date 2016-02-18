@@ -24,6 +24,9 @@ const (
 // HostInventoryAnnotation is the list of hosts from the inventory
 	HostInventoryAnnotation = "ansible.fabric8.io/host-inventory"
 
+// HostAnnotation is used to annotate a pod with the host name its processing
+	HostAnnotation = "ansible.fabric8.io/host"
+
 // EnvHosts is the environment variable on a pod for specifying the Ansible hosts in the inventory
 	EnvHosts = "GOSUPERVISE_HOSTS"
 
@@ -230,6 +233,26 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 				log.Info("Failed to update the RC, could be concurrent update failure: %s", err)
 			} else {
 				log.Info("Picked host " + pickedEntry.Host)
+
+				// lets update the Pod with the host name label
+				podClient := c.Pods(ns)
+				pod, err := podClient.Get(thisPodName)
+				if err != nil {
+					return pickedEntry, err
+				}
+				metadata := &pod.ObjectMeta
+				if metadata.Annotations == nil {
+					metadata.Annotations = make(map[string]string)
+				}
+				if metadata.Labels == nil {
+					metadata.Labels = make(map[string]string)
+				}
+				metadata.Labels["host"] = pickedEntry.Name
+				metadata.Annotations[HostAnnotation] = pickedEntry.Host
+				_, err = podClient.Update(pod)
+				if err != nil {
+					return pickedEntry, err
+				}
 				return pickedEntry, nil
 			}
 		}
