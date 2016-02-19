@@ -11,7 +11,7 @@ dependencies:
     - mkdir -p $HOME/bin
     - tar -vxz -C $HOME/bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
     - mkdir -p ${HOME}/gopath/src/github.com/fabric8io
-    - ln -s kansible ${HOME}/gopath/src/github.com/fabric8io
+    - ln -s ${HOME}/kansible ${HOME}/gopath/src/github.com/fabric8io
 
   override:
     - go version
