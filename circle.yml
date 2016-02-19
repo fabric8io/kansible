@@ -1,21 +1,14 @@
 machine:
   services:
     - docker
+  environment:
+    GO15VENDOREXPERIMENT: 1
 
 dependencies:
-  pre:
-    - wget "https://github.com/Masterminds/glide/releases/download/0.8.2/glide-0.8.2-linux-amd64.tar.gz"
-    - mkdir -p $HOME/bin
-    - tar -vxz -C $HOME/bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
-    - export PATH="$HOME/bin:$PATH" GLIDE_HOME="$HOME/.glide"
-    - export GO15VENDOREXPERIMENT=1
-    - export GOPATH=`pwd`
-
   override:
     - go version
-    - env
     - glide --version
-    - GO15VENDOREXPERIMENT=1 make bootstrap build test
+    - make bootstrap build test
 
 test:
   override:
