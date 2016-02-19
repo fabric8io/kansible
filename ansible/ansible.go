@@ -67,7 +67,7 @@ const (
 	AnsibleVariableConnection = "ansible_connection"
 
 // AnsibleVariablePassword is the Ansible inventory host variable for the password
-	AnsibleVariablePassword = "ansible_pass"
+	AnsibleVariablePassword = "ansible_ssh_pass"
 
 // ConnectionWinRM is the value AnsibleVariableConnection of for using Windows with WinRM
 	ConnectionWinRM = "winrm"
