@@ -91,6 +91,11 @@ test-style:
 		go vet github.com/fabric8io/kansible/$$i; \
 	done
 
+docker-scratch:
+	gox -verbose -ldflags "-X main.version=${VERSION}" -os="linux" -arch="amd64" \
+	   -output="bin/kansible-docker" .
+	docker build -f Dockerfile.scratch -t "fabric8/kansible:0.0.1-scratch"	.
+	docker tag -f "fabric8/kansible:0.0.1-scratch"	"fabric8/kansible:latest"
 
 release:
 	rm -rf build release && mkdir build release

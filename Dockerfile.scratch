@@ -1,5 +1,5 @@
 FROM scratch
 # Call 'make build-all' before building it
-ADD _dist/linux-amd64/kansible /
+ADD bin/kansible-docker /kansible
 # Variables are interpolated not by Docker but by kansible (they are transmitted literally)
 CMD [ "/kansible", "pod", "$KANSIBLE_HOSTS", "$KANSIBLE_COMMAND" ]
