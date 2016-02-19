@@ -1,6 +1,8 @@
 # Kansible
 
-Kansible is a simple tool for orchestrating your non-container based processes in the same way as you orchestrate all your Docker containers inside [Kubernetes](http://kubernetes.io/). Kansible uses 
+Kansible lets you orchestrate _processes_ in the same way as you orchestrate your Docker _containers_ with [Kubernetes](http://kubernetes.io/). 
+
+Kansible uses:
 
 * [Ansible](https://www.ansible.com/) to install, configure and provision your software onto machines using [playbooks](http://docs.ansible.com/ansible/playbooks.html) 
 * [Kubernetes](http://kubernetes.io/) to run and manage the processes and perform service discovery, scaling and load balancing.
