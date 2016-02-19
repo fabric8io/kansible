@@ -3,19 +3,20 @@ machine:
     - docker
   environment:
     GO15VENDOREXPERIMENT: 1
+    GOPATH: ${HOME}/gopath
 
 dependencies:
   pre:
     - wget "https://github.com/Masterminds/glide/releases/download/0.8.2/glide-0.8.2-linux-amd64.tar.gz"
     - mkdir -p $HOME/bin
     - tar -vxz -C $HOME/bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
+    - mkdir -p ${HOME}/gopath/src/github.com/fabric8io
+    - ln -s kansible ${HOME}/gopath/src/github.com/fabric8io
 
   override:
     - go version
     - glide --version
-    - env
-    - ls
-    - make bootstrap build test
+    - make bootstrap make build test
 
 test:
   override:
