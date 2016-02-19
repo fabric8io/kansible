@@ -2,6 +2,12 @@
 
 Kansible lets you orchestrate _processes_ in the same way as you orchestrate your Docker _containers_ with [Kubernetes](http://kubernetes.io/). 
 
+<p align="center">
+  <a href="http://github.com/fabric8io/kansible/">
+  	<img src="https://raw.githubusercontent.com/fabric8io/kansible/master/docs/images/logo.png" height="200" width="200" alt="kansible logo"/>
+  </a>
+</p>
+
 Kansible uses:
 
 * [Ansible](https://www.ansible.com/) to install, configure and provision your software onto machines using [playbooks](http://docs.ansible.com/ansible/playbooks.html) 
@@ -13,7 +19,7 @@ Kansible lets you slowly migrate to a pure container based Docker world while us
 
 ## Features
 
-* All your processes appear as Pods inside Kubernetes namespaces so you can visualise, query and watch the status of your processes in a canonical way
+* All your processes appear as Pods inside Kubernetes namespaces so you can visualise, query and watch the status of your processes and containers in a canonical way
 * Each kind of process has its own [Replication Controller](http://kubernetes.io/v1.1/docs/user-guide/replication-controller.html) to ensure processes keep running and so you can [manually or automatically scale](http://kubernetes.io/v1.1/docs/user-guide/replication-controller.html#scaling) the number of processes up or down; up to the limit in the number of hosts in your [Ansible inventory](http://docs.ansible.com/ansible/intro_inventory.html) 
 * You can view the logs of all your processes in the canonical kubernetes way via the CLI, REST API or web console
 * You can open a shell into the remote process machine via the CLI, REST API or web console
