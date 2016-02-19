@@ -13,8 +13,11 @@ node{
     sh "cd /go/src/workspace/${env.JOB_NAME} && make build"
 
     def imageName = 'kansible'
-    sh "docker build --rm -t ${imageName} ."
-    sh "docker tag -f ${imageName} docker.io/fabric8/${imageName}"
-    sh "docker push docker.io/fabric8/${imageName}"
+    def tag = 'latest'
+
+    kubernetes.image().withName(imageName).build().fromPath(".")
+    kubernetes.image().withName(imageName).tag().inRepository('docker.io/fabric8/'+image).withTag(tag)
+    kubernetes.image().withName('docker.io/fabric8/'+image).push().withTag(tag).toRegistry()
+
   }
 }
