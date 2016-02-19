@@ -21,7 +21,7 @@ node{
     def tag = 'latest'
 
     kubernetes.image().withName(imageName).build().fromPath(".")
-    kubernetes.image().withName(imageName).tag().inRepository('docker.io/fabric8/'+imageName).withTag(tag)
+    kubernetes.image().withName(imageName).tag().inRepository('docker.io/fabric8/'+imageName).force().withTag(tag)
     kubernetes.image().withName('docker.io/fabric8/'+imageName).push().withTag(tag).toRegistry()
 
   }
