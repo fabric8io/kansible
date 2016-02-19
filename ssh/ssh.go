@@ -10,8 +10,8 @@ import (
 	"github.com/fabric8io/kansible/log"
 )
 
-// RemoteSshCommand invokes the given command on a host and port
-func RemoteSshCommand(user string, privateKey string, host string, port string, cmd string) error {
+// RemoteSSHCommand invokes the given command on a host and port
+func RemoteSSHCommand(user string, privateKey string, host string, port string, cmd string) error {
 	if len(privateKey) == 0 {
 		return fmt.Errorf("Could not find PrivateKey for entry %s", host)
 	}
@@ -72,6 +72,7 @@ func RemoteSshCommand(user string, privateKey string, host string, port string, 
 	return nil
 }
 
+// PublicKeyFile creates the auth method for the given private key file
 func PublicKeyFile(file string) ssh.AuthMethod {
 	buffer, err := ioutil.ReadFile(file)
 	if err != nil {

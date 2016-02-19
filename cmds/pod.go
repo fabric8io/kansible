@@ -15,6 +15,9 @@ import (
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 )
 
+// Pod runs the kansible pod for a given group of hosts in an Ansible playbook
+// this grabs a specific host (using annotations on the RC) then runs a remote command
+// on that host binding stdin, stdout, stderr to the remote process
 func Pod(c *cli.Context) {
 	args := c.Args()
 	if len(args) < 2 {
@@ -86,7 +89,7 @@ func Pod(c *cli.Context) {
 		err = winrm.RemoteWinRmCommand(user, password, host, port, command)
 	} else {
 		privatekey := hostEntry.PrivateKey
-		err = ssh.RemoteSshCommand(user, privatekey, host, port, command)
+		err = ssh.RemoteSSHCommand(user, privatekey, host, port, command)
 	}
 	if err != nil {
 		log.Err("Failed: %v", err)

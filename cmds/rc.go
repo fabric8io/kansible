@@ -1,6 +1,5 @@
 package cmds
 
-
 import (
 	"github.com/codegangsta/cli"
 
@@ -10,7 +9,7 @@ import (
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 )
 
-
+// RC creates or updates the kansible ReplicationController for some hosts in an Ansible inventory
 func RC(c *cli.Context) {
 	args := c.Args()
 	if len(args) < 1 {

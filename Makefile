@@ -20,7 +20,7 @@ XBUILDFLAGS := -ldflags \
 
 BIN_DIR := bin
 DIST_DIR := _dist
-GO_PACKAGES := ansible k8s log
+GO_PACKAGES := ansible cmds k8s log ssh winrm
 MAIN_GO := kansible.go
 KANSIBLE_BIN := $(BIN_DIR)/kansible
 
