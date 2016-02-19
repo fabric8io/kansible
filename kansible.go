@@ -195,7 +195,7 @@ func fail(err error) {
 func applyAnsibleRC(c *cli.Context) {
 	args := c.Args()
 	if len(args) < 1 {
-		log.Die("Expected an argument!")
+		log.Die("Expected argument [hosts] for the name of the hosts in the ansible inventory file")
 	}
 	hosts := args[0]
 
@@ -230,7 +230,7 @@ func applyAnsibleRC(c *cli.Context) {
 func runAnsiblePod(c *cli.Context) {
 	args := c.Args()
 	if len(args) < 2 {
-		log.Die("Expected at least 2 arguments!")
+		log.Die("Expected arguments [hosts] [command]")
 	}
 	hosts := os.ExpandEnv(args[0])
 	command := os.ExpandEnv(strings.Join(args[1:], " "))
