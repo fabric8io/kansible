@@ -33,7 +33,7 @@ You use kansible as follows:
     
 where `myhosts` is the name of the hosts you wish to use in the [Ansible inventory](http://docs.ansible.com/ansible/intro_inventory.html).    
 
-Then **kansible** will create a [Replication Controller](http://kubernetes.io/v1.1/docs/user-guide/replication-controller.html) of kansible pods which will start and supervise your processes.  So for each remote process on Windows, Linux, Solaris, AIX, HPUX kansible will create a kansible pod in Kubernetes which starts the command and tails the log to stdout/stderr.
+Then **kansible** will then create/update [Secrets](http://kubernetes.io/v1.1/docs/user-guide/secrets.html) for any SSH private keys in your [Ansible inventory](http://docs.ansible.com/ansible/intro_inventory.html) and create a [Replication Controller](http://kubernetes.io/v1.1/docs/user-guide/replication-controller.html) of kansible pods which will start and supervise your processes.  So for each remote process on Windows, Linux, Solaris, AIX, HPUX kansible will create a kansible pod in Kubernetes which starts the command and tails the log to stdout/stderr.
 
 ### Using kansible
 
