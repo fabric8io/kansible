@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"math/rand"
+	"sort"
 	"strings"
 	"time"
 
@@ -97,14 +98,20 @@ func LoadHostEntries(inventoryFile string, hosts string) ([]*HostEntry, error) {
 	hostEntries := []*HostEntry{}
 	hostsLine := "[" + hosts + "]"
 	foundHeader := false
+	completed := false
+	hostNames := []string{}
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		text := strings.TrimSpace(scanner.Text())
 		if len(text) > 0 && !strings.HasPrefix(text, "#") {
+			isHost := strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]")
+			if isHost {
+				hostNames = append(hostNames, text[1:len(text) - 1])
+			}
 			if (foundHeader) {
-				if text[0] == '[' {
-					break
-				} else {
+				if isHost {
+					completed = true
+				} else if !completed {
 					hostEntry := parseHostEntry(text)
 					if hostEntry != nil {
 						hostEntries = append(hostEntries, hostEntry)
@@ -117,6 +124,11 @@ func LoadHostEntries(inventoryFile string, hosts string) ([]*HostEntry, error) {
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
+	}
+	if !foundHeader {
+		sort.Strings(hostNames)
+		return nil, fmt.Errorf("Could not find hosts `%s` in Ansible inventory file %s. Possible values are: %s",
+			hosts, inventoryFile, strings.Join(hostNames, ", "))
 	}
 	return hostEntries, nil
 }
