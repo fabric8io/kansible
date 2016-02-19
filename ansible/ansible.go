@@ -346,9 +346,9 @@ func forwardPort(conn net.Conn, address string) {
 	}()
 }
 
-// UpdateAnsibleRC reads the Ansible inventory and the RC for the supervisor and updates it in Kubernetes
-// along with removing any remaining pods which are for old hosts
-func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns string, rcFile string) (*api.ReplicationController, error) {
+// UpdateKansibleRC reads the Ansible inventory and the RC YAML for the hosts and updates it in Kubernetes
+// along with removing any remaining pods which are running against old hosts that have been removed from the inventory
+func UpdateKansibleRC(hostEntries []*HostEntry, hosts string, c *client.Client, ns string, rcFile string) (*api.ReplicationController, error) {
 	variables, err := LoadAnsibleVariables(hosts)
 	if err != nil {
 		return nil, err
@@ -396,12 +396,6 @@ func UpdateAnsibleRC(inventoryFile string, hosts string, c *client.Client, ns st
 	if len(command) == 0 {
 		return nil, fmt.Errorf("No environemnt variable value defined for %s in ReplicationController YAML file %s", EnvCommand, rcFile)
 	}
-
-	hostEntries, err := LoadHostEntries(inventoryFile, hosts)
-	if err != nil {
-		return nil, err
-	}
-	log.Info("Found %d host entries in the Ansible inventory for %s", len(hostEntries), hosts)
 
 	isUpdate := true
 	rc, err := c.ReplicationControllers(ns).Get(rcName)

@@ -9,7 +9,7 @@ import (
 	"github.com/fabric8io/kansible/winrm"
 )
 
-// Runs a remote command on a given host to test out SSH / WinRM
+// Run runs a remote command on a given host to test out SSH / WinRM
 func Run(c *cli.Context) {
 	port, err := osExpandAndVerifyGlobal(c, "port")
 	if err != nil {

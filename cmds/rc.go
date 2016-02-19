@@ -30,16 +30,20 @@ func RC(c *cli.Context) {
 		ns = "default"
 	}
 
-	rcName, err := osExpandAndVerify(c, "rc")
-	if err != nil {
-		fail(err)
-	}
-
 	inventory, err := osExpandAndVerify(c, "inventory")
 	if err != nil {
 		fail(err)
 	}
-	_, err = ansible.UpdateAnsibleRC(inventory, hosts, kubeclient, ns, rcName)
+
+	hostEntries, err := ansible.LoadHostEntries(inventory, hosts)
+	if err != nil {
+		fail(err)
+	}
+	log.Info("Found %d host entries in the Ansible inventory for %s", len(hostEntries), hosts)
+
+	rcFile := "kubernetes/" + hosts + "/rc.yml"
+
+	_, err = ansible.UpdateKansibleRC(hostEntries, hosts, kubeclient, ns, rcFile)
 	if err != nil {
 		fail(err)
 	}
