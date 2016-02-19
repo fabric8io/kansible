@@ -1,10 +1,22 @@
 # Kansible
 
-Orchestrate processes with Kubernetes and Ansible for cases where you have not yet dockerized your processes, or your process currently needs to run on Windows, AIX, Solaris or HP-UX or an old Linux distro that predates docker
+Kansible is a simple tool for orchestrating your non-container based processes in the same way as you orchestrate all your Docker containers inside [Kubernetes](http://kubernetes.io/). Kansible uses 
 
-## Overview
+* [Ansible](https://www.ansible.com/) to install, configure and provision your software onto machines using [playbooks](http://docs.ansible.com/ansible/playbooks.html) 
+* [Kubernetes](http://kubernetes.io/) to run and manage the processes and perform service discovery, scaling and load balancing.
 
-Kansible is a simple tool for orchestrating your non container based processes in the same way as you orchestrate all your containers inside Kubernetes. 
+Kansible provides a single pane of glass, CLI and REST API to all your processes whether they are inside docker containers or running as vanilla proccesses on Windows, AIX, Solaris or HP-UX or an old Linux distros that predate docker. 
+
+Kansible lets you slowly migrate to a pure container based Docker world while using Kubernetes to manage all your processes.
+
+## Features
+
+* All your processes appear as Pods inside Kubernetes namespaces so you can visualise, query and watch the status of your processes in a canonical way
+* Each kind of process has its own [Replication Controller](http://kubernetes.io/v1.1/docs/user-guide/replication-controller.html) to ensure processes keep running and so you can [manually or automatically scale](http://kubernetes.io/v1.1/docs/user-guide/replication-controller.html#scaling) the number of processes up or down; up to the limit in the number of hosts in your [Ansible inventory](http://docs.ansible.com/ansible/intro_inventory.html) 
+* You can view the logs of all your processes in the canonical kubernetes way via the CLI, REST API or web console
+* You can open a shell into the remote process machine via the CLI, REST API or web console
+* Port forwarding works from the pods to the remote processes so that you can reuse [Kubernetes Services](http://kubernetes.io/v1.1/docs/user-guide/services.html) to load balance across your processes automatically
+* [Centralised logging](http://fabric8.io/guide/logging.html) and [metrics and alerting](http://fabric8.io/guide/metrics.html) works equally across your containers and processes
 
 ## How it works
 
@@ -15,13 +27,13 @@ You use kansible as follows:
 * define a Replication Controller YAML file for running the command for your process [like this example](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/rc.yml#L15-L16). Its mostly boilerplate other than the actual command you need to run execute your process. Notice you can use the `{{ foo_bar }}` ansible variable expressions to refer to variables from your [global ansible variables file](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/group_vars/appservers)
 * whenever the playbook git repo changes, run the **kansible rc** command inside a clone of the playbook git repository:
 
+```bash
     kansible rc myhosts
+```    
     
 where `myhosts` is the name of the hosts you wish to use in the [Ansible inventory](http://docs.ansible.com/ansible/intro_inventory.html).    
 
-Then **kansible** will create a Replication Controller of kansible pods which will start and supervise your processes. 
-
-For each remote process on Windows, Linux, Solaris, AIX, HPUX kansible will create a kansible pod in Kubernetes.
+Then **kansible** will create a [Replication Controller](http://kubernetes.io/v1.1/docs/user-guide/replication-controller.html) of kansible pods which will start and supervise your processes.  So for each remote process on Windows, Linux, Solaris, AIX, HPUX kansible will create a kansible pod in Kubernetes which starts the command and tails the log to stdout/stderr.
 
 ### Using kansible
 
