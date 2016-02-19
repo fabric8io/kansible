@@ -9,15 +9,20 @@ node{
       .withSecret('jenkins-docker-cfg','/home/jenkins/.docker')
       .withServiceAccount('jenkins').inside {
 
-    sh 'make bootstrap'
-    sh "cd /go/src/workspace/${env.JOB_NAME} && make build"
+    retry(3){
+      sh 'make bootstrap'
+    }
+
+    retry(3){
+      sh "cd /go/src/workspace/${env.JOB_NAME} && make build"
+    }
 
     def imageName = 'kansible'
     def tag = 'latest'
 
     kubernetes.image().withName(imageName).build().fromPath(".")
     kubernetes.image().withName(imageName).tag().inRepository('docker.io/fabric8/'+image).withTag(tag)
-    kubernetes.image().withName('docker.io/fabric8/'+image).push().withTag(tag).toRegistry()
+    kubernetes.image().withName('docker.io/fabric8/'+imageName).push().withTag(tag).toRegistry()
 
   }
 }
