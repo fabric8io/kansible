@@ -5,6 +5,7 @@ machine:
     GO15VENDOREXPERIMENT: 1
     GOPATH: ${HOME}/gopath
 
+
 dependencies:
   pre:
     - wget "https://github.com/Masterminds/glide/releases/download/0.8.2/glide-0.8.2-linux-amd64.tar.gz"
@@ -15,9 +16,11 @@ dependencies:
   override:
     - go version
     - glide --version
-    - make bootstrap build test
+    - make bootstrap build test:
+        pwd: ${HOME}/gopath/src/github.com/fabric8io/kansible
   cache_directories:
     - "~/kansible/vendor"
+
 
 test:
   override:
