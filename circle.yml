@@ -13,7 +13,8 @@ dependencies:
 
   override:
     - go version
-    - make bootstrap build test
+    - env
+    - GOPATH=`pwd` PATH="$HOME/bin:$PATH" GLIDE_HOME="$HOME/.glide" GO15VENDOREXPERIMENT=1 make bootstrap build test
 
 test:
   override:
