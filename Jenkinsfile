@@ -13,8 +13,6 @@ node{
     sh "cd /go/src/workspace/${env.JOB_NAME} && make build"
 
     def imageName = 'kansible'
-    def newVersion = getNewVersion{}
-
     sh "docker build --rm -t ${imageName} ."
     sh "docker tag -f ${imageName} docker.io/fabric8/${imageName}"
     sh "docker push docker.io/fabric8/${imageName}"
