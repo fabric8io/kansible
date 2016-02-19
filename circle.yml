@@ -12,11 +12,12 @@ dependencies:
     - tar -vxz -C $HOME/bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
     - mkdir -p ${HOME}/gopath/src/github.com/fabric8io
     - ln -s ${HOME}/kansible ${HOME}/gopath/src/github.com/fabric8io
-
   override:
     - go version
     - glide --version
-    - make bootstrap make build test
+    - make bootstrap build test
+  cache_directories:
+    - "~/kansible/vendor"
 
 test:
   override:
