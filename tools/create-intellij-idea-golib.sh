@@ -3,10 +3,13 @@
 # Build up a GOPATH directory for IntelliJ IDEA
 # which doesn't support GO15VENDOREXPERIMENT yet
 
-rm -rf golib
 
-base="$(realpath $(dirname $0)/..)"
+pushd `dirname $0`/.. > /dev/null
+base=`pwd`
+popd > /dev/null
 golib=${base}/golib
+
+rm -rf ${golib}
 
 # Link all from the vendor dirs pulled by glide:
 vendor_src=${golib}/vendor/src
