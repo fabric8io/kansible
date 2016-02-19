@@ -3,11 +3,7 @@ node{
   stage 'canary release'
   git 'https://github.com/fabric8io/kansible.git'
 
-  kubernetes.pod('buildpod').withImage('fabric8/go-builder').withPrivileged(true)
-      .withHostPathMount('/var/run/docker.sock','/var/run/docker.sock')
-      .withEnvVar('DOCKER_CONFIG','/home/jenkins/.docker/')
-      .withSecret('jenkins-docker-cfg','/home/jenkins/.docker')
-      .withServiceAccount('jenkins').inside {
+  kubernetes.pod('buildpod').withImage('fabric8/go-builder').inside {
 
     retry(3){
       sh 'make bootstrap'
