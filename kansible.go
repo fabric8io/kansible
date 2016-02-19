@@ -232,18 +232,18 @@ func runAnsiblePod(c *cli.Context) {
 	if len(args) < 2 {
 		log.Die("Expected at least 2 arguments!")
 	}
-	hosts := args[0]
-	command := strings.Join(args[1:], " ")
+	hosts := os.ExpandEnv(args[0])
+	command := os.ExpandEnv(strings.Join(args[1:], " "))
 
 	log.Info("running command on a host from %s and command `%s`", hosts, command)
 
 	f := cmdutil.NewFactory(nil)
 	if f == nil {
-		log.Die("Failed to create Kuberentes client factory!")
+		log.Die("Failed to create Kubernetes client factory!")
 	}
 	kubeclient, _ := f.Client()
 	if kubeclient == nil {
-		log.Die("Failed to create Kuberentes client!")
+		log.Die("Failed to create Kubernetes client!")
 	}
 	ns, _, _ := f.DefaultNamespace()
 	if len(ns) == 0 {

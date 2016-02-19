@@ -1,6 +1,5 @@
 FROM scratch
 # Call 'make build-all' before building it
 ADD _dist/linux-amd64/kansible /
-# Image must be used with 2 arguments: HOSTS and COMMANDS
-# (they can't be added as environment since no shell is available)
-CMD [ "/kansible", "pod" ]
+# Variables are interpolated not by Docker but by kansible (they are transmitted literally)
+CMD [ "/kansible", "pod", "$KANSIBLE_HOSTS", "$KANSIBLE_COMMAND" ]
