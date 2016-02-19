@@ -2,19 +2,11 @@ package main
 
 import (
 	"errors"
-	"fmt"
-	"io/ioutil"
-	"os"
-	"strings"
 
 	"github.com/codegangsta/cli"
 
-	"github.com/fabric8io/kansible/ansible"
 	"github.com/fabric8io/kansible/log"
-	"github.com/fabric8io/kansible/ssh"
-	"github.com/fabric8io/kansible/winrm"
-
-	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
+	"github.com/fabric8io/kansible/cmds"
 )
 
 // version is the version of the app.
@@ -29,11 +21,13 @@ func main() {
 	app.Name = "kansible"
 	app.Usage = `Kansible
 
-This command supervises a remote process inside a Pod inside Kubernetes to make
-it look and feel like legacy processes running outside of Kubernetes are really
-running inside Docker inside Kubernetes.
+Kansible orchestrates processes in the same way as you orchestrate Docker containers with Kubernetes.
 
-`
+Once you have created an Ansible playbook to install and configure your software you can use Kansible to create
+a Kubernetes Replication Controller to run, scale and manage the processes providing a universal view in Kubernetes
+of all your containers and processes along with common scaling, high availability, service discovery and load balancing.
+
+More help is here: https://github.com/fabric8io/kansible/blob/master/README.md`
 	app.Version = version
 	app.EnableBashCompletion = true
 	app.After = func(c *cli.Context) error {
@@ -64,11 +58,30 @@ running inside Docker inside Kubernetes.
 
 	app.Commands = []cli.Command{
 		{
-			Name:    "pod",
-			Usage:   "Runs the supervisor pod for a single host in a set of hosts from an Ansible inventory.",
-			Description: `This commmand will begin running the supervisor command on one host from the Ansible inventory.`,
+			Name:    "rc",
+			Usage:   "Creates or updates the kansible ReplicationController for some hosts in an Ansible inventory.",
+			Description: `This commmand will analyse the hosts in an Ansible inventory and creates or updates the ReplicationController for the kansible pods.`,
 			ArgsUsage: "[hosts] [command]",
-			Action: runAnsiblePod,
+			Action: cmds.RC,
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:   "inventory",
+					Value:  "inventory",
+					Usage:  "The location of your Ansible inventory file",
+				},
+				cli.StringFlag{
+					Name:   "rc",
+					Value:  "rc.yml",
+					Usage:  "The YAML file of the ReplicationController for the supervisors",
+				},
+			},
+		},
+		{
+			Name:    "pod",
+			Usage:   "Runs the kansible pod which owns a host from the Ansible inventory then runs a remote command on the host.",
+			Description: `This commmand will pick an available host from the Ansible inventory, then run a remote command on that host.`,
+			ArgsUsage: "[hosts] [command]",
+			Action: cmds.Pod,
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:   "inventory",
@@ -97,30 +110,11 @@ running inside Docker inside Kubernetes.
 			},
 		},
 		{
-			Name:    "rc",
-			Usage:   "Applies ReplicationController for the supervisors for some hosts in an Ansible inventory.",
-			Description: `This commmand will analyse the hosts in an Ansible inventory and creates or updates the ReplicationController for its supervisors.`,
-			ArgsUsage: "[hosts] [command]",
-			Action: applyAnsibleRC,
-			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:   "inventory",
-					Value:  "inventory",
-					Usage:  "The location of your Ansible inventory file",
-				},
-				cli.StringFlag{
-					Name:   "rc",
-					Value:  "rc.yml",
-					Usage:  "The YAML file of the ReplicationController for the supervisors",
-				},
-			},
-		},
-		{
 			Name:    "run",
-			Usage:   "Runs a supervisor command on a given host as a user without using Ansible.",
+			Usage:   "Runs a remote command on a given host to test out SSH / WinRM",
 			Description: `This commmand will begin running the supervisor on an avaiable host.`,
 			ArgsUsage: "[string]",
-			Action: run,
+			Action: cmds.Run,
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:   "user",
@@ -163,191 +157,3 @@ running inside Docker inside Kubernetes.
 }
 
 
-func osExpand(c *cli.Context, name string) string {
-	flag := c.String(name)
-	value := os.ExpandEnv(flag)
-	log.Debug("flag %s is %s", name, value)
-	return value
-}
-
-func osExpandAndVerify(c *cli.Context, name string) (string, error) {
-	value := osExpand(c, name)
-	if len(value) == 0 {
-		return "", fmt.Errorf("No parameter supplied for: %s", name)
-	}
-	return value, nil
-}
-
-func osExpandAndVerifyGlobal(c *cli.Context, name string) (string, error) {
-	flag := c.GlobalString(name)
-	value := os.ExpandEnv(flag)
-	if len(value) == 0 {
-		return "", fmt.Errorf("No parameter supplied for: %s", name)
-	}
-	log.Debug("flag %s is %s", name, value)
-	return value, nil
-}
-
-func fail(err error) {
-	log.Die("Failed: %s", err)
-}
-
-func applyAnsibleRC(c *cli.Context) {
-	args := c.Args()
-	if len(args) < 1 {
-		log.Die("Expected argument [hosts] for the name of the hosts in the ansible inventory file")
-	}
-	hosts := args[0]
-
-	f := cmdutil.NewFactory(nil)
-	if f == nil {
-		log.Die("Failed to create Kuberentes client factory!")
-	}
-	kubeclient, _ := f.Client()
-	if kubeclient == nil {
-		log.Die("Failed to create Kuberentes client!")
-	}
-	ns, _, _ := f.DefaultNamespace()
-	if len(ns) == 0 {
-		ns = "default"
-	}
-
-	rcName, err := osExpandAndVerify(c, "rc")
-	if err != nil {
-		fail(err)
-	}
-
-	inventory, err := osExpandAndVerify(c, "inventory")
-	if err != nil {
-		fail(err)
-	}
-	_, err = ansible.UpdateAnsibleRC(inventory, hosts, kubeclient, ns, rcName)
-	if err != nil {
-		fail(err)
-	}
-}
-
-func runAnsiblePod(c *cli.Context) {
-	args := c.Args()
-	if len(args) < 2 {
-		log.Die("Expected arguments [hosts] [command]")
-	}
-	hosts := os.ExpandEnv(args[0])
-	command := os.ExpandEnv(strings.Join(args[1:], " "))
-
-	log.Info("running command on a host from %s and command `%s`", hosts, command)
-
-	f := cmdutil.NewFactory(nil)
-	if f == nil {
-		log.Die("Failed to create Kubernetes client factory!")
-	}
-	kubeclient, _ := f.Client()
-	if kubeclient == nil {
-		log.Die("Failed to create Kubernetes client!")
-	}
-	ns, _, _ := f.DefaultNamespace()
-	if len(ns) == 0 {
-		ns = "default"
-	}
-
-	inventory, err := osExpandAndVerify(c, "inventory")
-	if err != nil {
-		fail(err)
-	}
-	rcName, err := osExpandAndVerify(c, "rc")
-	if err != nil {
-		fail(err)
-	}
-	hostEntry, err := ansible.ChooseHostAndPrivateKey(inventory, hosts, kubeclient, ns, rcName)
-	if err != nil {
-		fail(err)
-	}
-	host := hostEntry.Host
-	user := hostEntry.User
-	port := hostEntry.Port
-	if len(port) == 0 {
-		port, err = osExpandAndVerifyGlobal(c, "port")
-	}
-	if err != nil {
-		fail(err)
-	}
-
-	connection := hostEntry.Connection
-	if len(connection) == 0 {
-		connection = osExpand(c, "connection")
-	}
-
-	bash := osExpand(c, "bash")
-	if len(bash) > 0 {
-		err = generateBashScript(bash, connection)
-		if err != nil {
-			log.Err("Failed to generate bash script at %s due to: %v", bash, err)
-		}
-	}
-
-	log.Info("using connection %s", connection)
-	if connection == ansible.ConnectionWinRM {
-		log.Info("Using WinRM to connect to the hosts %s", hosts)
-		password := hostEntry.Password
-		if len(password) == 0 {
-			password, err = osExpandAndVerify(c, "password")
-			if err != nil {
-				fail(err)
-			}
-		}
-		err = winrm.RemoteWinRmCommand(user, password, host, port, command)
-	} else {
-		privatekey := hostEntry.PrivateKey
-		err = ssh.RemoteSshCommand(user, privatekey, host, port, command)
-	}
-	if err != nil {
-		log.Err("Failed: %v", err)
-	}
-}
-
-func generateBashScript(file string, connection string) error {
-	shellCommand := "bash"
-	if connection == ansible.ConnectionWinRM {
-		shellCommand = "PowerShell"
-	}
-	text :=  "#!/bin/sh\n" + "echo opening shell on remote machine...\n" + "kansible pod appservers " + shellCommand + "\n";
-	return ioutil.WriteFile(file, []byte(text), 0555)
-}
-
-func run(c *cli.Context) {
-	log.Info("Running GoSupervise!")
-
-	port, err := osExpandAndVerifyGlobal(c, "port")
-	if err != nil {
-		fail(err)
-	}
-	command, err := osExpandAndVerify(c, "command")
-	if err != nil {
-		fail(err)
-	}
-	host, err := osExpandAndVerify(c, "host")
-	if err != nil {
-		fail(err)
-	}
-	user, err := osExpandAndVerify(c, "user")
-	if err != nil {
-		fail(err)
-	}
-	connection := c.String("connection")
-	if connection == ansible.ConnectionWinRM {
-		password, err := osExpandAndVerify(c, "password")
-		if err != nil {
-			fail(err)
-		}
-		err = winrm.RemoteWinRmCommand(user, password, host, port, command)
-	} else {
-		privatekey, err := osExpandAndVerify(c, "privatekey")
-		if err != nil {
-			fail(err)
-		}
-		err = ssh.RemoteSshCommand(user, privatekey, host, port, command)
-	}
-	if err != nil {
-		log.Err("Failed: %v", err)
-	}
-}
