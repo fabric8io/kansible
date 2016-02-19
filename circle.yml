@@ -3,16 +3,16 @@ machine:
     - docker
   environment:
     GO15VENDOREXPERIMENT: 1
-    GOPATH: ${HOME}/gopath
-
+    GOPATH: ${HOME}/kansible/gopath:${GOPATH}
+    PATH: ${HOME}/kansible/bin:${PATH}
 
 dependencies:
   pre:
     - wget "https://github.com/Masterminds/glide/releases/download/0.8.2/glide-0.8.2-linux-amd64.tar.gz"
-    - mkdir -p $HOME/bin
-    - tar -vxz -C $HOME/bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
-    - mkdir -p ${HOME}/gopath/src/github.com/fabric8io
-    - ln -s ${HOME}/kansible ${HOME}/gopath/src/github.com/fabric8io
+    - mkdir -p bin
+    - tar -vxz -C bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
+    - mkdir -p gopath/src/github.com/fabric8io
+    - ln -s $(pwd) gopath/src/github.com/fabric8io/kansible
   override:
     - go version
     - glide --version
@@ -26,11 +26,13 @@ test:
   override:
     - echo yes
 
-deployment:
-  hub:
-    branch: master
-    owner: fabric8io
-    commands:
-      - docker build -t fabric8/kansible .
-      - docker login -e $DOCKER_EMAIL -u $DOCKER_USER -p $DOCKER_PASS
-      - docker push fabric8/kansible
+# Disabled for now to avoid conflicts with the Jenkins builds:
+
+#deployment:
+#  hub:
+#    branch: master
+#    owner: fabric8io
+#    commands:
+#      - docker build -t fabric8/kansible .
+#      - docker login -e $DOCKER_EMAIL -u $DOCKER_USER -p $DOCKER_PASS
+#      - docker push fabric8/kansible
