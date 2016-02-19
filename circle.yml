@@ -13,6 +13,8 @@ dependencies:
   override:
     - go version
     - glide --version
+    - env
+    - ls
     - make bootstrap build test
 
 test:
