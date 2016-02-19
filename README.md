@@ -17,7 +17,7 @@ You use kansible as follows:
 
     kansible rc myhosts
     
-where `myhosts` is the name of the hosts you wish to use in the Ansible inventory.    
+where `myhosts` is the name of the hosts you wish to use in the [Ansible inventory](http://docs.ansible.com/ansible/intro_inventory.html).    
 
 Then **kansible** will create a Replication Controller of kansible pods which will start and supervise your processes. 
 
@@ -42,7 +42,7 @@ You can open a shell directly on the remote machine via the web console or by ru
 
     oc exec -p mypodname bash
         
-### Running Kansible
+### Examples
   
 To try out running one of the example Ansible provisioned apps try the following:
 

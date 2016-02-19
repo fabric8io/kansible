@@ -34,17 +34,17 @@ const (
 	HostAddressAnnotation = "ansible.fabric8.io/host-address"
 
 // EnvHosts is the environment variable on a pod for specifying the Ansible hosts in the inventory
-	EnvHosts = "GOSUPERVISE_HOSTS"
+	EnvHosts = "KANSIBLE_HOSTS"
 
 // EnvCommand is the environment variable on a pod for specifying the command to run on each host
-	EnvCommand = "GOSUPERVISE_COMMAND"
+	EnvCommand = "KANSIBLE_COMMAND"
 
 // EnvRC is the environment variable on a pod for the name of the ReplicationController
-	EnvRC = "GOSUPERVISE_RC"
+	EnvRC = "KANSIBLE_RC"
 
 // EnvBash is the environment variable on a pod for the name of the bash script to generate on startup for
 // opening a remote shell
-	EnvBash = "GOSUPERVISE_BASH"
+	EnvBash = "KANSIBLE_BASH"
 
 // PlaybookVolumeMount is the volume mount point where the playbook is assumed to be in the supervisor pod
 	PlaybookVolumeMount = "/playbook"
