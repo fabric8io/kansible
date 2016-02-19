@@ -68,6 +68,11 @@ func Pod(c *cli.Context) {
 		connection = osExpand(c, "connection")
 	}
 
+	runCommand := hostEntry.RunCommand
+	if len(runCommand) != 0 {
+		command = runCommand
+	}
+
 	bash := osExpand(c, "bash")
 	if len(bash) > 0 {
 		err = generateBashScript(bash, connection)

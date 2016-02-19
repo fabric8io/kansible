@@ -72,6 +72,9 @@ const (
 // ConnectionWinRM is the value AnsibleVariableConnection of for using Windows with WinRM
 	ConnectionWinRM = "winrm"
 
+	// app_run_command is the Ansible inventory host variable for the run command that is executed on the remote host
+	AppRunCommand = "app_run_command"
+
 	gitURLPrefix = "url = "
 	gitConfig = ".git/config"
 )
@@ -85,6 +88,7 @@ type HostEntry struct {
 	PrivateKey string
 	Connection string
 	Password   string
+	RunCommand string
 }
 
 // LoadHostEntries loads the Ansible inventory for a given hosts string value
@@ -265,12 +269,12 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 				if metadata.Annotations == nil {
 					metadata.Annotations = make(map[string]string)
 				}
-/*
-				if metadata.Labels == nil {
-					metadata.Labels = make(map[string]string)
-				}
-				metadata.Labels["host"] = pickedEntry.Name
-*/
+				/*
+								if metadata.Labels == nil {
+									metadata.Labels = make(map[string]string)
+								}
+								metadata.Labels["host"] = pickedEntry.Name
+				*/
 				metadata.Annotations[HostNameAnnotation] = pickedEntry.Name
 				metadata.Annotations[HostAddressAnnotation] = pickedEntry.Host
 				//pod.Status = api.PodStatus{}
@@ -605,6 +609,13 @@ func (hostEntry HostEntry) write(buffer *bytes.Buffer) {
 		buffer.WriteString("=")
 		buffer.WriteString(password)
 	}
+	runCommand := hostEntry.RunCommand
+	if len(runCommand) > 0 {
+		buffer.WriteString(" ")
+		buffer.WriteString(AppRunCommand)
+		buffer.WriteString("=")
+		buffer.WriteString(runCommand)
+	}
 	port := hostEntry.Port
 	if len(port) > 0 {
 		buffer.WriteString(" ")
@@ -638,6 +649,7 @@ func parseHostEntry(text string) *HostEntry {
 	privateKey := ""
 	connection := ""
 	password := ""
+	runCommand := ""
 	count := len(values)
 	if count > 0 {
 		name = values[0];
@@ -660,6 +672,8 @@ func parseHostEntry(text string) *HostEntry {
 					connection = paramValue
 				case AnsibleVariablePassword:
 					password = paramValue
+				case AppRunCommand:
+					runCommand = paramValue
 				}
 			}
 		}
@@ -677,6 +691,7 @@ func parseHostEntry(text string) *HostEntry {
 		PrivateKey: privateKey,
 		Connection: connection,
 		Password: password,
+		RunCommand: runCommand,
 	}
 }
 
