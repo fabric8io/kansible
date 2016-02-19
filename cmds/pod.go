@@ -26,8 +26,6 @@ func Pod(c *cli.Context) {
 	hosts := os.ExpandEnv(args[0])
 	command := os.ExpandEnv(strings.Join(args[1:], " "))
 
-	log.Info("running command on a host from %s and command `%s`", hosts, command)
-
 	f := cmdutil.NewFactory(nil)
 	if f == nil {
 		log.Die("Failed to create Kubernetes client factory!")
@@ -73,6 +71,7 @@ func Pod(c *cli.Context) {
 		command = runCommand
 	}
 
+	log.Info("running command on a host from %s and command `%s`", hosts, command)
 	bash := osExpand(c, "bash")
 	if len(bash) > 0 {
 		err = generateBashScript(bash, connection)
