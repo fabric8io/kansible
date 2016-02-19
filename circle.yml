@@ -1,6 +1,6 @@
 machine:
-  services:
-    - docker
+#  services:
+#    - docker
   environment:
     GO15VENDOREXPERIMENT: 1
     GOPATH: ${HOME}/kansible/gopath:${GOPATH}
@@ -16,11 +16,10 @@ dependencies:
   override:
     - go version
     - glide --version
-    - make bootstrap build test:
-        pwd: ../gopath/src/github.com/fabric8io/kansible
+    - make bootstrap build:
+        pwd: gopath/src/github.com/fabric8io/kansible
   cache_directories:
     - vendor
-
 
 test:
   override:
