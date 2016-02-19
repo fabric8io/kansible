@@ -26,8 +26,9 @@ You use kansible as follows:
 
 * create an [Ansible playbook](http://docs.ansible.com/ansible/playbooks.html) to _install and provision_ the software you wish to run on a number of machines defined by the [Ansible inventory](http://docs.ansible.com/ansible/intro_inventory.html)
 * run the [Ansible playbook](http://docs.ansible.com/ansible/playbooks.html) either as part of a [CI / CD build pipeline](http://fabric8.io/guide/cdelivery.html) when there's a change to the git repo of the Playbook, or using a command line tool, cron or [Ansible Tower](https://www.ansible.com/tower)
-* define a Replication Controller YAML file for running the command for your process [like this example](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/rc.yml#L15-L16). 
-* the RC YAML file contains the command you need to run remotely to execute your process. You can use the `{{ foo_bar }}` ansible variable expressions to refer to variables from your [global ansible variables file](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/group_vars/appservers)
+* define a Replication Controller YAML file at `kubernetes/$HOSTS/rc.yml` for running the command for your process [like this example](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/kubernetes/appservers/rc.yml#L15-L16). 
+* the RC YAML file contains the command you need to run remotely to execute your process via [`$KANSIBLE_COMMAND`](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/kubernetes/appservers/rc.yml#L15-L16)
+. You can use the `{{ foo_bar }}` ansible variable expressions to refer to variables from your [global ansible variables file](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/group_vars/appservers)
 * whenever the playbook git repo changes, run the **kansible rc** command inside a clone of the playbook git repository:
 
 ```bash
@@ -112,9 +113,8 @@ You can now scale down / up the number of pods using the web console or the comm
 
 The examples use the following files:
 
-* `inventory` is the Ansible inventory file used unless you specify the `--inventory` command line option
-* `kubernetes/$HOSTS/rc.yml` is the Replication Controller configuration used for the supervisor pods unless you specify the `--rc` command line option
-
+* [inventory](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/inventory) is the Ansible inventory file to define the [hosts](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/inventory#L1-L3) to run the processes
+* [kubernetes/$HOSTS/rc.yml](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/kubernetes/appservers/rc.yml) is the Replication Controller configuration used to [define the command `$KANSIBLE_COMMAND`](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/kubernetes/appservers/rc.yml#L15-L16) which kansible uses to run the process remotely
  
 ### [fabric8-ansible-hawtapp](https://github.com/fabric8io/fabric8-ansible-hawtapp)
 
