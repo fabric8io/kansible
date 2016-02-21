@@ -20,7 +20,9 @@ Kansible lets you slowly migrate to a pure container based Docker world while us
 ## Features
 
 * All your processes appear as Pods inside Kubernetes namespaces so you can visualise, query and watch the status of your processes and containers in a canonical way
-* Each kind of process has its own [Replication Controller](http://kubernetes.io/v1.1/docs/user-guide/replication-controller.html) to ensure processes keep running and so you can [manually or automatically scale](http://kubernetes.io/v1.1/docs/user-guide/replication-controller.html#scaling) the number of processes up or down; up to the limit in the number of hosts in your [Ansible inventory](http://docs.ansible.com/ansible/intro_inventory.html) 
+* Each kind of process has its own [Replication Controller](http://kubernetes.io/v1.1/docs/user-guide/replication-controller.html) to ensure processes keep running and so you can [manually or automatically scale](http://kubernetes.io/v1.1/docs/user-guide/replication-controller.html#scaling) the number of processes up or down; up to the limit in the number of hosts in your [Ansible inventory](http://docs.ansible.com/ansible/intro_inventory.html)
+* Reuse Kubernetes [liveness checks](http://kubernetes.io/v1.1/docs/user-guide/liveness/README.html) so that Kubernetes can monitor the state of your process and restart if it goes bad  
+* Reuse Kubernetes [readiness checks](http://kubernetes.io/v1.1/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks) so that Kubernetes can know when your process can be included into the [internal or external service load balancer](http://kubernetes.io/v1.1/docs/user-guide/services.html) 
 * You can view the logs of all your processes in the canonical kubernetes way via the CLI, REST API or web console
 * You can open a shell into the remote process machine via the CLI, REST API or web console
 * Port forwarding works from the pods to the remote processes so that you can reuse [Kubernetes Services](http://kubernetes.io/v1.1/docs/user-guide/services.html) to load balance across your processes automatically
