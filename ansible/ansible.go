@@ -309,7 +309,7 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 
 // forwardPorts forwards any ports that are defined in the PodSpec to the host
 func forwardPorts(pod *api.Pod, hostEntry *HostEntry) error {
-	disableForwarding = os.Getenv(KANSIBLE_PORT_FORWARD)
+	disableForwarding := os.Getenv(EnvPortForward)
 	if len(disableForwarding) > 0 {
 		if strings.ToLower(disableForwarding) == "false" {
 			return nil
