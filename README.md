@@ -67,13 +67,14 @@ This means you can take advantage of things like [centralised metrics and alerti
 You can open a shell directly on the remote machine via the web console or by running 
 
     oc exec -p mypodname bash
-        
+
+
 ## Examples
   
 To try out running one of the example Ansible provisioned apps try the following:
 
 * [Download a release](https://github.com/fabric8io/kansible/releases) and add `kansible` to your `$PATH` 
-* Or [Build kansible](https://github.com/fabric8io/kansible#building) then add the `$PWD/bin` folder to your `$PATH` so that you can type in `kansible` on the command line
+* Or [Build kansible](https://github.com/fabric8io/kansible/blob/master/BUILDING.md) then add the `$PWD/bin` folder to your `$PATH` so that you can type in `kansible` on the command line
 
 These examples assume you have a working [Kubernetes](http://kubernetes.io/) or [OpenShift](https://www.openshift.org/) cluster running.
 
@@ -154,7 +155,53 @@ To try using windows machines, replace `appservers` with `winboxes` in the above
 Or you can add the windows machine into the `appservers` hosts section in the `inventory` file.
 
 
-### Configuring kansible
+## Configuration
+
+To configure kansible you need to configure a [Replication Controller](http://kubernetes.io/v1.1/docs/user-guide/replication-controller.html) in a file called [kubernetes/$HOSTS/rc.yml](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/kubernetes/appservers/rc.yml).
+ 
+Specify a name and optionally some labels for the replication controller inside the `metadata` object. There's no need to specify the `spec.selector` or `spec.template.containers[0].metadata.labels` values as those are inherited by default from the `metadata.labels`.
+ 
+Then you must specify a command to run via the [`$KANSIBLE_COMMAND`](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/kubernetes/appservers/rc.yml#L15-L16) environment variable:
+
+```yaml
+---
+apiVersion: "v1"
+kind: "ReplicationController"
+metadata:
+  name: "myapp"
+  labels:
+    project: "myapp"
+    version: "{{ app_version }}"
+spec:
+  template:
+    spec:
+      containers:
+      - env:
+        - name: "KANSIBLE_COMMAND"
+          value: "/opt/foo-{{ app_version }}/bin/run.sh"
+      serviceAccountName: "fabric8"
+```
+
+### Optional environment variables
+
+You can specify the following extra environment variables in the `spec.template.spec.containers[0].env` array like the use of `KANSIBLE_COMMAND` above. These values can use Ansible variable expressions too. 
+
+#### KANSIBLE_EXPORT_ENV_VARS
+
+Specify a space separated list of environment variable names which should be exported into the remote shell when running the remote command.
+
+Note that typically your [sshd_config](http://linux.die.net/man/5/sshd_config) will disable the use of most environment variables being exported that don't start with `LC_*` so you may need to [configure your sshd](http://linux.die.net/man/5/sshd_config) in `/etc/ssh/sshd_config` to enable this.
+
+
+#### KANSIBLE_BASH
+
+This defines the path where the bash script will be generated for running a remote bash shell. This allows running the command `bash` inside the kansible pod to remotely execute either `/bin/bash` or `cmd.exe` for Windows machines on the remote machine when you try to open a shell inside the Web Console or via:
+
+```bash
+    oc exec -p mypodname bash
+```
+
+### SSH or WinRM
 
 The best way to configure if you want to connect via SSH for unix machines or WinRM for windows machines is via the Ansible Inventory.
 
@@ -209,63 +256,3 @@ Where the output is of the form ` pod.ansible.fabric8.io/$HOSTNAME: $PODNAME`
 
 
  
-## Building
- 
- * install [glide](https://github.com/Masterminds/glide#install)
- * prepare the `vendor` folder by typing
- 
- ```
-     make bootstrap
-     export GO15VENDOREXPERIMENT=1
- ```
-     
- * then to build the binary
-     
- ```
-     make build
- ```
-     
- * you can then run it via
- 
- ```    
-     ./bin/kansible
- ```
-
-## Running pods locally
-
-You can run `kansible rc ...` easily on a local build when working on the code. However to try out changes to the pod for `kansible pod ...` you can run that locally outside of docker with a small trick.
-
-You must set the `HOSTNAME` environment variable to a valid pod name you wish to use.
-
-```
-    export HOSTNAME=fabric8-znuj5
-```
-
-e.g. the above uses the pod name for the current fabric8 console.
-
-This lets you pretend to be different pods from the command line when trying it out locally. e.g. run the `kansible pod ...` command in 2 shells as different pods, provided the `HOSTNAME` values are diferent.
-
-The pod name must be valid as `kansible pod ...` command will update the pod to annotate which host its chosen etc.
-
-So to run the [above examples](#running-kansible) type the following:
-
-for [fabric8-ansible-spring-boot](https://github.com/fabric8io/fabric8-ansible-spring-boot):
-    
-```    
-    kansible pod -rc hawtapp-demo appservers /opt/cdi-camel-2.2.98-SNAPSHOT-app/bin/run.sh
-```      
-
-for [fabric8-ansible-hawtapp](https://github.com/fabric8io/fabric8-ansible-hawtapp):
-
-```    
-    kansible pod  -rc springboot-demo appservers /opt/springboot-camel-2.2.98-SNAPSHOT
-```      
-
-
-## License
-
-Copyright 2016 Red Hat, Inc.
-
-Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at <http://www.apache.org/licenses/LICENSE-2.0>
-
-Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.

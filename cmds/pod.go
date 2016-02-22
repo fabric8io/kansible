@@ -47,7 +47,8 @@ func Pod(c *cli.Context) {
 	if err != nil {
 		fail(err)
 	}
-	hostEntry, err := ansible.ChooseHostAndPrivateKey(inventory, hosts, kubeclient, ns, rcName)
+	envVars := make(map[string]string)
+	hostEntry, err := ansible.ChooseHostAndPrivateKey(inventory, hosts, kubeclient, ns, rcName, envVars)
 	if err != nil {
 		fail(err)
 	}
@@ -93,7 +94,8 @@ func Pod(c *cli.Context) {
 		err = winrm.RemoteWinRmCommand(user, password, host, port, command)
 	} else {
 		privatekey := hostEntry.PrivateKey
-		err = ssh.RemoteSSHCommand(user, privatekey, host, port, command)
+
+		err = ssh.RemoteSSHCommand(user, privatekey, host, port, command, envVars)
 	}
 	if err != nil {
 		log.Err("Failed: %v", err)

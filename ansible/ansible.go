@@ -43,6 +43,9 @@ const (
 // EnvRC is the environment variable on a pod for the name of the ReplicationController
 	EnvRC = "KANSIBLE_RC"
 
+// EnvExportEnvVars is the space separated list of environment variables exported to the remote process
+	EnvExportEnvVars = "KANSIBLE_EXPORT_ENV_VARS"
+
 // EnvBash is the environment variable on a pod for the name of the bash script to generate on startup for
 // opening a remote shell
 	EnvBash = "KANSIBLE_BASH"
@@ -72,7 +75,7 @@ const (
 // ConnectionWinRM is the value AnsibleVariableConnection of for using Windows with WinRM
 	ConnectionWinRM = "winrm"
 
-	// app_run_command is the Ansible inventory host variable for the run command that is executed on the remote host
+// AppRunCommand is the Ansible inventory host variable for the run command that is executed on the remote host
 	AppRunCommand = "app_run_command"
 
 	gitURLPrefix = "url = "
@@ -159,7 +162,7 @@ func LoadHostEntriesFromText(text string) ([]*HostEntry, error) {
 
 // ChooseHostAndPrivateKey parses the given Ansible inventory file for the hosts
 // and chooses a single host inside it, returning the host name and the private key
-func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Client, ns string, rcName string) (*HostEntry, error) {
+func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Client, ns string, rcName string, envVars map[string]string) (*HostEntry, error) {
 	var err error
 	thisPodName := os.Getenv("HOSTNAME")
 	if len(thisPodName) == 0 {
@@ -269,12 +272,6 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 				if metadata.Annotations == nil {
 					metadata.Annotations = make(map[string]string)
 				}
-				/*
-								if metadata.Labels == nil {
-									metadata.Labels = make(map[string]string)
-								}
-								metadata.Labels["host"] = pickedEntry.Name
-				*/
 				metadata.Annotations[HostNameAnnotation] = pickedEntry.Name
 				metadata.Annotations[HostAddressAnnotation] = pickedEntry.Host
 				//pod.Status = api.PodStatus{}
@@ -282,6 +279,23 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 				if err != nil {
 					return pickedEntry, err
 				}
+
+				// lets export required environment variables
+				exportEnvVars := os.Getenv(EnvExportEnvVars)
+				if len(exportEnvVars) > 0 {
+					names := strings.Split(exportEnvVars, " ")
+					for _, name := range names {
+						name = strings.TrimSpace(name)
+						if len(name) > 0 {
+							value := os.Getenv(name)
+							if len(value) > 0 {
+								envVars[name] = value
+								log.Debug("Exporting environment variable %s = %s", name, value)
+							}
+						}
+					}
+				}
+
 				err = forwardPorts(pod, pickedEntry)
 				return pickedEntry, err
 			}

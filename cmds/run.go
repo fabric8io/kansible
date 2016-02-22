@@ -39,7 +39,8 @@ func Run(c *cli.Context) {
 		if err != nil {
 			fail(err)
 		}
-		err = ssh.RemoteSSHCommand(user, privatekey, host, port, command)
+		envVars := make(map[string]string)
+		err = ssh.RemoteSSHCommand(user, privatekey, host, port, command, envVars)
 	}
 	if err != nil {
 		log.Err("Failed: %v", err)

@@ -11,7 +11,7 @@ import (
 )
 
 // RemoteSSHCommand invokes the given command on a host and port
-func RemoteSSHCommand(user string, privateKey string, host string, port string, cmd string) error {
+func RemoteSSHCommand(user string, privateKey string, host string, port string, cmd string, envVars map[string]string) error {
 	if len(privateKey) == 0 {
 		return fmt.Errorf("Could not find PrivateKey for entry %s", host)
 	}
@@ -63,6 +63,14 @@ func RemoteSSHCommand(user string, privateKey string, host string, port string, 
 		return fmt.Errorf("Unable to setup stderr for session: %v", err)
 	}
 	go io.Copy(os.Stderr, stderr)
+
+
+	for envName, envValue := range envVars {
+		log.Info("Setting environment value %s = %s", envName, envValue)
+		if err := session.Setenv(envName, envValue); err != nil {
+		  return fmt.Errorf("Could not set environment variable %s = %s over SSH. This could be disabled by the sshd configuration. See the `AcceptEnv` setting in your /etc/ssh/sshd_config more info: http://linux.die.net/man/5/sshd_config . Error: %s", envName, envValue, err)
+		}
+	}
 
 	log.Info("Running command %s", cmd)
 	err = session.Run(cmd)
