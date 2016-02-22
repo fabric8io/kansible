@@ -46,6 +46,9 @@ const (
 // EnvExportEnvVars is the space separated list of environment variables exported to the remote process
 	EnvExportEnvVars = "KANSIBLE_EXPORT_ENV_VARS"
 
+// EnvPortForward allows port forwarding to be disabled
+	EnvPortForward = "KANSIBLE_PORT_FORWARD"
+
 // EnvBash is the environment variable on a pod for the name of the bash script to generate on startup for
 // opening a remote shell
 	EnvBash = "KANSIBLE_BASH"
@@ -313,7 +316,7 @@ func forwardPorts(pod *api.Pod, hostEntry *HostEntry) error {
 			name := port.Name
 			portNum := port.ContainerPort
 			if portNum > 0 {
-				address := "localhost:" + strconv.Itoa(portNum)
+				address := "0.0.0.0:" + strconv.Itoa(portNum)
 				forwardAddress := host + ":" + strconv.Itoa(portNum)
 				err := forwardPortLoop(name, address, forwardAddress)
 				if err != nil {

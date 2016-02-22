@@ -107,6 +107,6 @@ func generateBashScript(file string, connection string) error {
 	if connection == ansible.ConnectionWinRM {
 		shellCommand = "PowerShell"
 	}
-	text :=  "#!/bin/sh\n" + "echo opening shell on remote machine...\n" + "kansible pod appservers " + shellCommand + "\n";
+	text :=  "#!/bin/sh\n" + "echo opening shell on remote machine...\n" + "export KANSIBLE_PORT_FORWARD=false\n" + "kansible pod appservers " + shellCommand + "\n";
 	return ioutil.WriteFile(file, []byte(text), 0555)
 }

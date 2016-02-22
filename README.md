@@ -201,6 +201,16 @@ This defines the path where the bash script will be generated for running a remo
     oc exec -p mypodname bash
 ```
 
+#### KANSIBLE_PORT_FORWARD
+
+Allows port forwarding to be disabled. 
+
+```
+export KANSIBLE_PORT_FORWARD=false
+```
+
+This is mostly useful to allow the `bash` command within a pod to not also try to port forward as this will fail ;)
+
 ### SSH or WinRM
 
 The best way to configure if you want to connect via SSH for unix machines or WinRM for windows machines is via the Ansible Inventory.
