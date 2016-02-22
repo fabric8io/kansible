@@ -160,7 +160,12 @@ Or you can add the windows machine into the `appservers` hosts section in the `i
 To configure kansible you need to configure a [Replication Controller](http://kubernetes.io/v1.1/docs/user-guide/replication-controller.html) in a file called [kubernetes/$HOSTS/rc.yml](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/kubernetes/appservers/rc.yml).
  
 Specify a name and optionally some labels for the replication controller inside the `metadata` object. There's no need to specify the `spec.selector` or `spec.template.containers[0].metadata.labels` values as those are inherited by default from the `metadata.labels`.
- 
+
+You can specify the following environment variables in the `spec.template.spec.containers[0].env` array like the use of `KANSIBLE_COMMAND` below. 
+
+These values can use Ansible variable expressions too. 
+
+### KANSIBLE_COMMAND 
 Then you must specify a command to run via the [`$KANSIBLE_COMMAND`](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/kubernetes/appservers/rc.yml#L15-L16) environment variable:
 
 ```yaml
@@ -182,9 +187,12 @@ spec:
       serviceAccountName: "fabric8"
 ```
 
-### Optional environment variables
+### KANSIBLE_COMMAND_WINRM 
 
-You can specify the following extra environment variables in the `spec.template.spec.containers[0].env` array like the use of `KANSIBLE_COMMAND` above. These values can use Ansible variable expressions too. 
+This environment variable lets you provide a Windows specific command. It works the same as the `KANSIBLE_COMMAND` environment variable above, but this value is only used for Ansible connections of the form `winrm`. i.e. to supply a windows only command to execute.
+
+Its quite common to have a `foo.sh` script to run sh/bash scripts on unix and then a `foo.bat` or `foo.cmd` file for Windows. 
+
 
 #### KANSIBLE_EXPORT_ENV_VARS
 

@@ -13,6 +13,7 @@ import (
 	"github.com/fabric8io/kansible/winrm"
 
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
+	"fmt"
 )
 
 // Pod runs the kansible pod for a given group of hosts in an Ansible playbook
@@ -20,11 +21,14 @@ import (
 // on that host binding stdin, stdout, stderr to the remote process
 func Pod(c *cli.Context) {
 	args := c.Args()
-	if len(args) < 2 {
+	if len(args) < 1 {
 		log.Die("Expected arguments [hosts] [command]")
 	}
 	hosts := os.ExpandEnv(args[0])
-	command := os.ExpandEnv(strings.Join(args[1:], " "))
+	command := ""
+	if len(args) > 1 {
+		command = os.ExpandEnv(strings.Join(args[1:], " "))
+	}
 
 	f := cmdutil.NewFactory(nil)
 	if f == nil {
@@ -70,6 +74,26 @@ func Pod(c *cli.Context) {
 	runCommand := hostEntry.RunCommand
 	if len(runCommand) != 0 {
 		command = runCommand
+	}
+
+	commandEnvVars := []string{}
+	if len(command) == 0 {
+		if len(connection) > 0 {
+			envVarName := ansible.EnvCommand + "_" + strings.ToUpper(connection)
+			commandEnvVars = append(commandEnvVars, envVarName)
+			command = os.Getenv(envVarName)
+		}
+	}
+	commandEnvVars = append(commandEnvVars, ansible.EnvCommand)
+	if len(command) == 0 {
+		command = os.Getenv(ansible.EnvCommand)
+	}
+	if len(command) == 0 {
+		plural := ""
+		if len(commandEnvVars) > 1 {
+			plural = "s"
+		}
+		fail(fmt.Errorf("Could not find a command to execute from the environment variable%s: %s", plural, strings.Join(commandEnvVars, ", ")))
 	}
 
 	log.Info("running command on a host from %s and command `%s`", hosts, command)
