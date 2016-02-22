@@ -161,11 +161,13 @@ To configure kansible you need to configure a [Replication Controller](http://ku
  
 Specify a name and optionally some labels for the replication controller inside the `metadata` object. There's no need to specify the `spec.selector` or `spec.template.containers[0].metadata.labels` values as those are inherited by default from the `metadata.labels`.
 
+### Environment variables
+
 You can specify the following environment variables in the `spec.template.spec.containers[0].env` array like the use of `KANSIBLE_COMMAND` below. 
 
 These values can use Ansible variable expressions too. 
 
-### KANSIBLE_COMMAND 
+#### KANSIBLE_COMMAND 
 Then you must specify a command to run via the [`$KANSIBLE_COMMAND`](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/kubernetes/appservers/rc.yml#L15-L16) environment variable:
 
 ```yaml
@@ -187,7 +189,7 @@ spec:
       serviceAccountName: "fabric8"
 ```
 
-### KANSIBLE_COMMAND_WINRM 
+#### KANSIBLE_COMMAND_WINRM 
 
 This environment variable lets you provide a Windows specific command. It works the same as the `KANSIBLE_COMMAND` environment variable above, but this value is only used for Ansible connections of the form `winrm`. i.e. to supply a windows only command to execute.
 
@@ -219,7 +221,7 @@ export KANSIBLE_PORT_FORWARD=false
 
 This is mostly useful to allow the `bash` command within a pod to not also try to port forward as this will fail ;)
 
-### SSH or WinRM
+#### SSH or WinRM
 
 The best way to configure if you want to connect via SSH for unix machines or WinRM for windows machines is via the Ansible Inventory.
 
