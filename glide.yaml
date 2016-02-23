@@ -15,6 +15,9 @@ import:
 - package: gopkg.in/yaml.v2
 - package: github.com/nu7hatch/gouuid
 - package: github.com/masterzen/xmlpath
+  version: 13f4951698adc0fa9c1dda3e275d489a24201161
 - package: github.com/masterzen/simplexml/dom
-- package: github.com/masterzen/winrm
-  version: 54ea5d01478cfc2afccec1504bd0dfcd8c260cfa
+#- package: github.com/masterzen/winrm
+#  version: 54ea5d01478cfc2afccec1504bd0dfcd8c260cfa
+- package: github.com/jstrachan/winrm
+  version: 96a5fdea7f3028115685f9d3ba5e2d5792601874

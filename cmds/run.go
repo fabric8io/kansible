@@ -33,7 +33,7 @@ func Run(c *cli.Context) {
 		if err != nil {
 			fail(err)
 		}
-		err = winrm.RemoteWinRmCommand(user, password, host, port, command)
+		err = winrm.RemoteWinRmCommand(user, password, host, port, command, nil, nil, "")
 	} else {
 		privatekey, err := osExpandAndVerify(c, "privatekey")
 		if err != nil {

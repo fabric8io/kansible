@@ -74,6 +74,10 @@ More help is here: https://github.com/fabric8io/kansible/blob/master/README.md`
 					Value:  "rc.yml",
 					Usage:  "The YAML file of the ReplicationController for the supervisors",
 				},
+				cli.StringFlag{
+					Name:   "replicas",
+					Usage:  "Specifies the number of replicas to create for the RC",
+				},
 			},
 		},
 		{
@@ -83,11 +87,6 @@ More help is here: https://github.com/fabric8io/kansible/blob/master/README.md`
 			ArgsUsage: "[hosts] [command]",
 			Action: cmds.Pod,
 			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:   "inventory",
-					Value:  "inventory",
-					Usage:  "The location of your Ansible inventory file",
-				},
 				cli.StringFlag{
 					Name:   "rc",
 					Value:  "$KANSIBLE_RC",
@@ -106,6 +105,19 @@ More help is here: https://github.com/fabric8io/kansible/blob/master/README.md`
 					Name:   "bash",
 					Value:  "$KANSIBLE_BASH",
 					Usage:  "If specified a script is generated for running a bash like shell on the remote machine",
+				},
+			},
+		},
+		{
+			Name:    "kill",
+			Usage:   "Kills any pending shells for this pod.",
+			Description: `This commmand will find the shell thats associated with a pod and kill it.`,
+			Action: cmds.Kill,
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:   "rc",
+					Value:  "$KANSIBLE_RC",
+					Usage:  "The name of the ReplicationController for the supervisors",
 				},
 			},
 		},

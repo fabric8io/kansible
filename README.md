@@ -267,8 +267,8 @@ Where `hawtapp-demo` is the name of the RC for the supervisors.
 The output is of the format:
 
 ```
-    pod.ansible.fabric8.io/app1: supervisor-znuj5
-    pod.ansible.fabric8.io/app2: supervisor-1same
+    pod.kansible.fabric8.io/app1: supervisor-znuj5
+    pod.kansible.fabric8.io/app2: supervisor-1same
 ```
 
 Where the output is of the form ` pod.ansible.fabric8.io/$HOSTNAME: $PODNAME`

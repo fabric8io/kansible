@@ -1,6 +1,9 @@
 package cmds
 
 import (
+	"fmt"
+	"strconv"
+
 	"github.com/codegangsta/cli"
 
 	"github.com/fabric8io/kansible/ansible"
@@ -48,7 +51,16 @@ func RC(c *cli.Context) {
 
 	rcFile := "kubernetes/" + hosts + "/rc.yml"
 
-	_, err = ansible.UpdateKansibleRC(hostEntries, hosts, kubeclient, ns, rcFile)
+	replicas := -1
+	replicaText := c.String("replicas")
+	if len(replicaText) > 0 {
+		replicas, err = strconv.Atoi(replicaText)
+		if err != nil {
+			fail(fmt.Errorf("Failed to parse replicas text `%s`. Error: %s", replicaText, err))
+		}
+	}
+
+	_, err = ansible.UpdateKansibleRC(hostEntries, hosts, kubeclient, ns, rcFile, replicas)
 	if err != nil {
 		fail(err)
 	}

@@ -1,6 +1,7 @@
 package cmds
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"strings"
@@ -8,12 +9,12 @@ import (
 	"github.com/codegangsta/cli"
 
 	"github.com/fabric8io/kansible/ansible"
+	"github.com/fabric8io/kansible/k8s"
 	"github.com/fabric8io/kansible/log"
 	"github.com/fabric8io/kansible/ssh"
 	"github.com/fabric8io/kansible/winrm"
 
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"fmt"
 )
 
 // Pod runs the kansible pod for a given group of hosts in an Ansible playbook
@@ -43,16 +44,17 @@ func Pod(c *cli.Context) {
 		ns = "default"
 	}
 
-	inventory, err := osExpandAndVerify(c, "inventory")
-	if err != nil {
-		fail(err)
-	}
 	rcName, err := osExpandAndVerify(c, "rc")
 	if err != nil {
 		fail(err)
 	}
 	envVars := make(map[string]string)
-	hostEntry, err := ansible.ChooseHostAndPrivateKey(inventory, hosts, kubeclient, ns, rcName, envVars)
+	thisPodName, err := k8s.GetThisPodName()
+	if err != nil {
+		fail(err)
+	}
+
+	hostEntry, rc, err := ansible.ChooseHostAndPrivateKey(thisPodName, hosts, kubeclient, ns, rcName, envVars)
 	if err != nil {
 		fail(err)
 	}
@@ -115,7 +117,7 @@ func Pod(c *cli.Context) {
 				fail(err)
 			}
 		}
-		err = winrm.RemoteWinRmCommand(user, password, host, port, command)
+		err = winrm.RemoteWinRmCommand(user, password, host, port, command, kubeclient, rc, hostEntry.Name)
 	} else {
 		privatekey := hostEntry.PrivateKey
 

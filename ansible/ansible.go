@@ -10,6 +10,7 @@ import (
 	"os"
 	"math/rand"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,21 +19,23 @@ import (
 
 	"github.com/fabric8io/kansible/log"
 	"github.com/fabric8io/kansible/k8s"
-	"strconv"
 )
 
 const (
 // AnsibleHostPodAnnotationPrefix is the annotation prefix used on the RC to associate a host name with a pod name
-	AnsibleHostPodAnnotationPrefix = "pod.ansible.fabric8.io/"
+	AnsibleHostPodAnnotationPrefix = "pod.kansible.fabric8.io/"
 
 // HostInventoryAnnotation is the list of hosts from the inventory
-	HostInventoryAnnotation = "ansible.fabric8.io/host-inventory"
+	HostInventoryAnnotation = "kansible.fabric8.io/host-inventory"
 
 // HostNameAnnotation is used to annotate a pod with the host name its processing
-	HostNameAnnotation = "ansible.fabric8.io/host-name"
+	HostNameAnnotation = "kansible.fabric8.io/host-name"
 
 // HostAddressAnnotation is used to annotate a pod with the host address its processing
-	HostAddressAnnotation = "ansible.fabric8.io/host-address"
+	HostAddressAnnotation = "kansible.fabric8.io/host-address"
+
+// WinRMShellAnnotationPrefix stores the shell ID for the WinRM host name on the RC
+	WinRMShellAnnotationPrefix = "winrm.shellid.kansible.fabric8.io/"
 
 // EnvHosts is the environment variable on a pod for specifying the Ansible hosts in the inventory
 	EnvHosts = "KANSIBLE_HOSTS"
@@ -165,19 +168,7 @@ func LoadHostEntriesFromText(text string) ([]*HostEntry, error) {
 
 // ChooseHostAndPrivateKey parses the given Ansible inventory file for the hosts
 // and chooses a single host inside it, returning the host name and the private key
-func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Client, ns string, rcName string, envVars map[string]string) (*HostEntry, error) {
-	var err error
-	thisPodName := os.Getenv("HOSTNAME")
-	if len(thisPodName) == 0 {
-		thisPodName, err = os.Hostname()
-		if err != nil {
-			return nil, err
-		}
-	}
-	if len(thisPodName) == 0 {
-		return nil, fmt.Errorf("Could not find the pod name using $HOSTNAME!")
-	}
-
+func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client, ns string, rcName string, envVars map[string]string) (*HostEntry, *api.ReplicationController, error) {
 	retryAttempts := 20
 
 	for i := 0; i < retryAttempts; i++ {
@@ -186,19 +177,19 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 			time.Sleep(time.Duration(random(1000, 20000)) * time.Millisecond)
 		}
 		if c == nil {
-			return nil, fmt.Errorf("No Kubernetes Client specified!")
+			return nil, nil, fmt.Errorf("No Kubernetes Client specified!")
 		}
 		rc, err := c.ReplicationControllers(ns).Get(rcName)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if rc == nil {
-			return nil, fmt.Errorf("No ReplicationController found for name %s", rcName)
+			return nil, nil, fmt.Errorf("No ReplicationController found for name %s", rcName)
 		}
 
 		pods, err := c.Pods(ns).List(nil, nil)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 
@@ -212,11 +203,11 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 
 		hostsText := annotations[HostInventoryAnnotation]
 		if len(hostsText) == 0 {
-			return nil, fmt.Errorf("Could not find annotation %s on ReplicationController %s", HostInventoryAnnotation, rcName)
+			return nil, nil, fmt.Errorf("Could not find annotation %s on ReplicationController %s", HostInventoryAnnotation, rcName)
 		}
 		hostEntries, err := LoadHostEntriesFromText(hostsText)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		log.Info("Found %d host entries", len(hostEntries))
 
@@ -243,23 +234,23 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 
 			if count == 0 {
 				log.Info("There are no more hosts available to be supervised by this pod!")
-				return nil, fmt.Errorf("No more hosts available to be supervised!")
+				return nil, nil, fmt.Errorf("No more hosts available to be supervised!")
 			}
 			log.Info("After filtering out hosts owned by other pods we have %v host entries left", count)
 
 			pickedEntry := filteredHostEntries[random(0, count)]
 			hostName := pickedEntry.Name;
 			if len(pickedEntry.Host) == 0 {
-				return nil, fmt.Errorf("Could not find host name for entry %s", pickedEntry.Name)
+				return nil, nil, fmt.Errorf("Could not find host name for entry %s", pickedEntry.Name)
 			}
 			if len(pickedEntry.User) == 0 {
-				return nil, fmt.Errorf("Could not find User for entry %s", pickedEntry.Name)
+				return nil, nil, fmt.Errorf("Could not find User for entry %s", pickedEntry.Name)
 			}
 
 			// lets try pick this pod
 			annotations[AnsibleHostPodAnnotationPrefix + hostName] = thisPodName
 
-			_, err = c.ReplicationControllers(ns).Update(rc)
+			rc, err = c.ReplicationControllers(ns).Update(rc)
 			if err != nil {
 				log.Info("Failed to update the RC, could be concurrent update failure: %s", err)
 			} else {
@@ -269,7 +260,7 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 				podClient := c.Pods(ns)
 				pod, err := podClient.Get(thisPodName)
 				if err != nil {
-					return pickedEntry, err
+					return pickedEntry, nil, err
 				}
 				metadata := &pod.ObjectMeta
 				if metadata.Annotations == nil {
@@ -278,9 +269,9 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 				metadata.Annotations[HostNameAnnotation] = pickedEntry.Name
 				metadata.Annotations[HostAddressAnnotation] = pickedEntry.Host
 				//pod.Status = api.PodStatus{}
-				_, err = podClient.UpdateStatus(pod)
+				pod, err = podClient.UpdateStatus(pod)
 				if err != nil {
-					return pickedEntry, err
+					return pickedEntry, nil, err
 				}
 
 				// lets export required environment variables
@@ -300,11 +291,11 @@ func ChooseHostAndPrivateKey(inventoryFile string, hosts string, c *client.Clien
 				}
 
 				err = forwardPorts(pod, pickedEntry)
-				return pickedEntry, err
+				return pickedEntry, rc, err
 			}
 		}
 	}
-	return nil, fmt.Errorf("Could not find any hosts for inventory file %s and hosts %s", inventoryFile, hosts)
+	return nil, nil, fmt.Errorf("Could not find any available hosts on the ReplicationController %s and hosts %s", rcName, hosts)
 }
 
 // forwardPorts forwards any ports that are defined in the PodSpec to the host
@@ -375,7 +366,7 @@ func forwardPort(conn net.Conn, address string) {
 
 // UpdateKansibleRC reads the Ansible inventory and the RC YAML for the hosts and updates it in Kubernetes
 // along with removing any remaining pods which are running against old hosts that have been removed from the inventory
-func UpdateKansibleRC(hostEntries []*HostEntry, hosts string, c *client.Client, ns string, rcFile string) (*api.ReplicationController, error) {
+func UpdateKansibleRC(hostEntries []*HostEntry, hosts string, c *client.Client, ns string, rcFile string, replicas int) (*api.ReplicationController, error) {
 	variables, err := LoadAnsibleVariables(hosts)
 	if err != nil {
 		return nil, err
@@ -448,8 +439,13 @@ func UpdateKansibleRC(hostEntries []*HostEntry, hosts string, c *client.Client, 
 	resourceVersion := metadata.ResourceVersion
 	rcSpec := &rc.Spec
 	hostCount := len(hostEntries)
-	replicas := originalReplicas
-	if replicas == 0 || replicas > hostCount {
+	if replicas < 0 {
+		replicas = originalReplicas
+		if !isUpdate && replicas == 0 {
+			replicas = hostCount
+		}
+	}
+	if replicas > hostCount {
 		replicas = hostCount
 	}
 	rcSpec.Replicas = replicas
@@ -568,7 +564,8 @@ func removeHostEntry(hostEntries []*HostEntry, name string) []*HostEntry {
 	return hostEntries
 }
 
-func getHostEntryByName(hostEntries []*HostEntry, name string) *HostEntry {
+// GetHostEntryByName finds the HostEntry for the given host name or returns nil
+func GetHostEntryByName(hostEntries []*HostEntry, name string) *HostEntry {
 	for _, entry := range hostEntries {
 		if entry.Name == name {
 			return entry
@@ -583,7 +580,7 @@ func deletePodsForOldHosts(c *client.Client, ns string, annotations map[string]s
 		if strings.HasPrefix(annKey, AnsibleHostPodAnnotationPrefix) {
 			hostName := annKey[len(AnsibleHostPodAnnotationPrefix):]
 			if (k8s.PodIsRunning(pods, podName)) {
-				hostEntry := getHostEntryByName(hostEntries, hostName)
+				hostEntry := GetHostEntryByName(hostEntries, hostName)
 				if hostEntry == nil {
 					log.Info("Deleting pod %s as there is no longer an Ansible inventory host called %s", podName, hostName)
 					c.Pods(ns).Delete(podName, nil)

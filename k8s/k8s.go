@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 
@@ -9,6 +10,22 @@ import (
 	"github.com/ghodss/yaml"
 )
 
+
+// GetThisPodName returns this pod name via the `HOSTNAME` environment variable
+func GetThisPodName() (string, error) {
+	var err error
+	thisPodName := os.Getenv("HOSTNAME")
+	if len(thisPodName) == 0 {
+		thisPodName, err = os.Hostname()
+		if err != nil {
+			return "", err
+		}
+	}
+	if len(thisPodName) == 0 {
+		return "", fmt.Errorf("Could not find the pod name using $HOSTNAME!")
+	}
+	return thisPodName, nil
+}
 // ReadReplicationControllerFromFile reads the ReplicationController object from the given file name
 func ReadReplicationControllerFromFile(filename string) (*api.ReplicationController, error) {
 	data, err := ReadBytesFromFile(filename)
