@@ -9,8 +9,7 @@ import(
 	"github.com/fabric8io/kansible/ansible"
 	"github.com/fabric8io/kansible/log"
 
-	//"github.com/masterzen/winrm/winrm"
-	"github.com/jstrachan/winrm/winrm"
+	"github.com/masterzen/winrm/winrm"
 
 	"k8s.io/kubernetes/pkg/api"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
