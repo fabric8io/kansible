@@ -128,6 +128,23 @@ func EnsureContainerHasEnvVar(container *api.Container, name string, value strin
 	return false
 }
 
+
+// EnsureContainerHasPreStopCommand ensures that the given container has a `preStop` lifecycle hook
+// to invoke the given commands
+func EnsureContainerHasPreStopCommand(container *api.Container, commands []string) {
+	if container.Lifecycle == nil {
+		container.Lifecycle = &api.Lifecycle{}
+	}
+	lifecycle := container.Lifecycle
+	if lifecycle.PreStop == nil {
+		lifecycle.PreStop = &api.Handler{}
+	}
+	preStop := lifecycle.PreStop
+	preStop.Exec = &api.ExecAction{
+		Command: commands,
+	}
+}
+
 // EnsureContainerHasVolumeMount ensures that there is a volume mount of the given name with the given values
 // Returns true if there was already a volume mount
 func EnsureContainerHasVolumeMount(container *api.Container, name string, mountPath string) bool {

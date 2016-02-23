@@ -407,6 +407,8 @@ func UpdateKansibleRC(hostEntries []*HostEntry, hosts string, c *client.Client, 
 	if len(container.ImagePullPolicy) == 0 {
 		container.ImagePullPolicy = "IfNotPresent"
 	}
+	preStopCommands := []string{"kansible", "kill"}
+	k8s.EnsureContainerHasPreStopCommand(container, preStopCommands)
 	k8s.EnsureContainerHasEnvVar(container, EnvHosts, hosts)
 	k8s.EnsureContainerHasEnvVar(container, EnvRC, rcName)
 	k8s.EnsureContainerHasEnvVar(container, EnvBash, "/usr/local/bin/bash")
