@@ -9,6 +9,11 @@ import (
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 )
 
+const (
+// MessageFailedToCreateKubernetesClient is the message to report if a kuberentes client cannot be created
+	MessageFailedToCreateKubernetesClient = "Failed to create Kubernetes client. Maybe you need to run `oc login`?. Error: %s"
+)
+
 // RC creates or updates the kansible ReplicationController for some hosts in an Ansible inventory
 func RC(c *cli.Context) {
 	args := c.Args()
@@ -19,11 +24,11 @@ func RC(c *cli.Context) {
 
 	f := cmdutil.NewFactory(nil)
 	if f == nil {
-		log.Die("Failed to create Kuberentes client factory!")
+		log.Die("Failed to create Kubernetes client factory!")
 	}
-	kubeclient, _ := f.Client()
-	if kubeclient == nil {
-		log.Die("Failed to create Kuberentes client!")
+	kubeclient, err := f.Client()
+	if err != nil || kubeclient == nil {
+		log.Die(MessageFailedToCreateKubernetesClient, err)
 	}
 	ns, _, _ := f.DefaultNamespace()
 	if len(ns) == 0 {

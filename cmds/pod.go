@@ -34,9 +34,9 @@ func Pod(c *cli.Context) {
 	if f == nil {
 		log.Die("Failed to create Kubernetes client factory!")
 	}
-	kubeclient, _ := f.Client()
-	if kubeclient == nil {
-		log.Die("Failed to create Kubernetes client!")
+	kubeclient, err := f.Client()
+	if err != nil || kubeclient == nil {
+		log.Die(MessageFailedToCreateKubernetesClient, err)
 	}
 	ns, _, _ := f.DefaultNamespace()
 	if len(ns) == 0 {
