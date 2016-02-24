@@ -1,13 +1,20 @@
 ## Building
  
+ * install [go version 1.5.1 or later](https://golang.org/doc/install)
  * install [glide](https://github.com/Masterminds/glide#install)
- * prepare the `vendor` folder by typing
+ * type the following:
  
- ```
-     make bootstrap
-     export GO15VENDOREXPERIMENT=1
- ```
-     
+```
+cd $GOPATH
+mkdir -p src/github.com/fabric8io/
+cd src/github.com/fabric8io/
+git clone https://github.com/fabric8io/kansible.git
+cd fabric8io
+
+export GO15VENDOREXPERIMENT=1
+make bootstrap
+```
+
  * then to build the binary
      
  ```
