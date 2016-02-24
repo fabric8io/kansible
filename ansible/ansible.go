@@ -22,6 +22,8 @@ import (
 
 	"github.com/fabric8io/kansible/log"
 	"github.com/fabric8io/kansible/k8s"
+
+	"github.com/ghodss/yaml"
 )
 
 const (
@@ -534,16 +536,42 @@ func applyOtherKubernetesResource(f *cmdutil.Factory, c *client.Client, ns strin
 
 
 	// lets use the `oc` binary instead
+	isOc := true
 	binary, err := exec.LookPath("oc")
-    if err != nil {
+	if err != nil {
+		isOc = false
 		var err2 error
 		binary, err2 = exec.LookPath("kubectl")
 		if err2 != nil {
 			return err
 		}
-    }
-	cmd := exec.Command(binary, "apply", "-f", "-")
-	cmd.Stdin = bytes.NewReader(data)
+	}
+	reader := bytes.NewReader(data)
+	err = runCommand(binary, []string{"apply", "-f", "-"}, reader)
+	if err != nil {
+		return err
+	}
+	if isOc {
+		// if we are a service lets try figure out the service name?
+		service := api.Service{}
+		if err := yaml.Unmarshal(data, &service); err != nil {
+			log.Info("Probably not a service! %s", err)
+			return nil
+		}
+		name := service.ObjectMeta.Name
+		serviceType := service.Spec.Type
+		if service.Kind == "Service" && len(name) > 0 && serviceType == "LoadBalancer" {
+			log.Info("Checking the service %s is exposed in OpenShift", name)
+			runCommand(binary, []string{"expose", "service", name}, os.Stdin)
+			return nil
+		}
+	}
+	return nil
+}
+
+func runCommand(binary string, args []string, reader io.Reader) error {
+	cmd := exec.Command(binary, args...)
+	cmd.Stdin = reader
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -559,13 +587,13 @@ func applyOtherKubernetesResource(f *cmdutil.Factory, c *client.Client, ns strin
 
 	err = cmd.Start()
 	if err != nil {
-		log.Err("Failed to start command %s. %s\n", binary, err)
+		//log.Err("Failed to start command %s. %s\n", binary, err)
 		return err
 	}
 
 	err = cmd.Wait()
 	if err != nil {
-		log.Err("Failed to complete command %s. %s", binary, err)
+		//log.Err("Failed to complete command %s. %s", binary, err)
 		return err
 	}
     return err
