@@ -51,6 +51,9 @@ const (
 // EnvRC is the environment variable on a pod for the name of the ReplicationController
 	EnvRC = "KANSIBLE_RC"
 
+// EnvNamespace is the environment variable on a pod for the namespace to use
+	EnvNamespace = "KANSIBLE_NAMESPACE"
+
 // EnvExportEnvVars is the space separated list of environment variables exported to the remote process
 	EnvExportEnvVars = "KANSIBLE_EXPORT_ENV_VARS"
 
@@ -413,13 +416,22 @@ func UpdateKansibleRC(hostEntries []*HostEntry, hosts string, f *cmdutil.Factory
 		container.ImagePullPolicy = "IfNotPresent"
 	}
 	preStopCommands := []string{"kansible", "kill"}
+	if len(podSpec.ServiceAccountName) == 0 {
+		podSpec.ServiceAccountName = rcName
+	}
+	serviceAccountName := podSpec.ServiceAccountName
 	k8s.EnsureContainerHasPreStopCommand(container, preStopCommands)
 	k8s.EnsureContainerHasEnvVar(container, EnvHosts, hosts)
 	k8s.EnsureContainerHasEnvVar(container, EnvRC, rcName)
 	k8s.EnsureContainerHasEnvVar(container, EnvBash, "/usr/local/bin/bash")
+	k8s.EnsureContainerHasEnvVarFromField(container, EnvNamespace, "metadata.namespace")
 	command := k8s.GetContainerEnvVar(container, EnvCommand)
 	if len(command) == 0 {
 		return nil, fmt.Errorf("No environemnt variable value defined for %s in ReplicationController YAML file %s", EnvCommand, rcFile)
+	}
+
+	if len(serviceAccountName) > 0 {
+		k8s.EnsureServiceAccountExists(c, ns, serviceAccountName)
 	}
 
 	isUpdate := true

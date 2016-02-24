@@ -136,6 +136,29 @@ func EnsureContainerHasEnvVar(container *api.Container, name string, value strin
 	return false
 }
 
+// EnsureContainerHasEnvVarFromField if there is an existing EnvVar for the given name then lets update it
+// with the given fieldPath otherwise lets add a new entry.
+// Returns true if there was already an existing environment variable
+func EnsureContainerHasEnvVarFromField(container *api.Container, name string, fieldPath string) bool {
+	from := &api.EnvVarSource{
+		FieldRef: &api.ObjectFieldSelector{
+			FieldPath: fieldPath,
+		},
+	}
+	for _, env := range container.Env {
+		if env.Name == name {
+			env.ValueFrom = from
+			env.Value = ""
+			return true
+		}
+	}
+	container.Env = append(container.Env, api.EnvVar{
+		Name: name,
+		ValueFrom: from,
+	})
+	return false
+}
+
 
 // EnsureContainerHasPreStopCommand ensures that the given container has a `preStop` lifecycle hook
 // to invoke the given commands
@@ -215,6 +238,24 @@ func EnsurePodSpecHasSecretVolume(podSpec *api.PodSpec, name string, secretName 
 	return false
 }
 
+
+
+// EnsureServiceAccountExists ensures that there is a service account created for the given name
+func EnsureServiceAccountExists(c *client.Client, ns string, serviceAccountName string) error {
+	saClient := c.ServiceAccounts(ns)
+	sa, err := saClient.Get(serviceAccountName)
+	if err != nil || sa == nil {
+		// lets try create the SA
+		sa = &api.ServiceAccount{
+			ObjectMeta: api.ObjectMeta{
+				Name: serviceAccountName,
+			},
+		}
+		log.Info("Creating ServiceAccount %s", serviceAccountName)
+		_, err = saClient.Create(sa)
+	}
+	return nil
+}
 
 // ApplyResource applies the given data as a kubernetes resource
 func ApplyResource(f *cmdutil.Factory, c *client.Client, ns string, data []byte, name string) error {

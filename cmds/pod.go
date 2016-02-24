@@ -39,10 +39,14 @@ func Pod(c *cli.Context) {
 	if err != nil || kubeclient == nil {
 		log.Die(MessageFailedToCreateKubernetesClient, err)
 	}
-	ns, _, _ := f.DefaultNamespace()
+	ns := os.Getenv(ansible.EnvNamespace)
 	if len(ns) == 0 {
-		ns = "default"
+		ns, _, _ = f.DefaultNamespace()
+		if len(ns) == 0 {
+			ns = "default"
+		}
 	}
+	log.Info("Using Kubernetes namespace %s", ns)
 
 	rcName, err := osExpandAndVerify(c, "rc")
 	if err != nil {
