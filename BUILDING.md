@@ -20,7 +20,7 @@
      ./bin/kansible
  ```
 
-## Running pods locally
+### Running pods locally
 
 You can run `kansible rc ...` easily on a local build when working on the code. However to try out changes to the pod for `kansible pod ...` you can run that locally outside of docker with a small trick.
 
@@ -49,3 +49,29 @@ for [fabric8-ansible-hawtapp](https://github.com/fabric8io/fabric8-ansible-hawta
 ```    
     kansible pod  -rc springboot-demo appservers /opt/springboot-camel-2.2.98-SNAPSHOT
 ```      
+
+### Working with Windows
+
+If you're like me and have used a Mac for years, you might have forgotten how to work with Windows boxes ;). Here's some tips on how to test things out on the Windows VMs
+
+First install the [winrm binary](http://github.com/masterzen/winrm/) which you can do if you have golang installed via:
+
+
+    go get github.com/masterzen/winrm
+    
+
+Then to connect to one of the Windows VMs from an example, such as the [fabric8-ansible-hawtapp](https://github.com/fabric8io/fabric8-ansible-hawtapp) you can use:
+ 
+    winrm -hostname 10.10.3.21 -username IEUser -password 'Passw0rd!' 'cmd'
+    
+
+Then you can test if a java process is running via
+    
+    jps -l
+
+If you wish to kill a java process from its PID you can type:
+    
+    taskkill /PID 4308 /F
+    
+Enjoy!    
+

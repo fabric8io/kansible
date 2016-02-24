@@ -1,6 +1,6 @@
 # Kansible
 
-Kansible lets you orchestrate _processes_ in the same way as you orchestrate your Docker _containers_ with [Kubernetes](http://kubernetes.io/). 
+Kansible lets you orchestrate operating system _processes_ on Windows or any Unix in the same way as you orchestrate your Docker _containers_ with [Kubernetes](http://kubernetes.io/) by using [Ansible](https://www.ansible.com/) to provision the software onto hosts and Kubernetes to orchestate the processes.
 
 <p align="center">
   <a href="http://github.com/fabric8io/kansible/">
