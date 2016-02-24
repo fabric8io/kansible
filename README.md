@@ -15,7 +15,7 @@ Kansible uses:
 
 Kansible provides a single pane of glass, CLI and REST API to all your processes whether they are inside docker containers or running as vanilla proccesses on Windows, AIX, Solaris or HP-UX or an old Linux distros that predate docker. 
 
-Kansible lets you slowly migrate to a pure container based Docker world while using Kubernetes to manage all your processes.
+Kansible lets you slowly migrate to a pure container based Docker world while using Kubernetes to orchstrate all your containers and operating system processes.
 
 ## Features
 

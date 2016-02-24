@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strconv"
 
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/v1"
+
 	"github.com/codegangsta/cli"
 
 	"github.com/fabric8io/kansible/ansible"
@@ -24,6 +27,12 @@ func RC(c *cli.Context) {
 		log.Die("Expected argument [hosts] for the name of the hosts in the ansible inventory file")
 	}
 	hosts := args[0]
+
+	scheme := api.Scheme
+	v1Codec := v1.Codec
+	if scheme != nil && v1Codec != nil {
+		log.Info("Loaded v1 schema!")
+	}
 
 	f := cmdutil.NewFactory(nil)
 	if f == nil {
@@ -60,7 +69,7 @@ func RC(c *cli.Context) {
 		}
 	}
 
-	_, err = ansible.UpdateKansibleRC(hostEntries, hosts, kubeclient, ns, rcFile, replicas)
+	_, err = ansible.UpdateKansibleRC(hostEntries, hosts, f, kubeclient, ns, rcFile, replicas)
 	if err != nil {
 		fail(err)
 	}

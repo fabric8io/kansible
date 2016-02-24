@@ -8,14 +8,17 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"os/exec"
 	"math/rand"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/api"
+	client "k8s.io/kubernetes/pkg/client/unversioned"
+	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 
 	"github.com/fabric8io/kansible/log"
 	"github.com/fabric8io/kansible/k8s"
@@ -366,7 +369,7 @@ func forwardPort(conn net.Conn, address string) {
 
 // UpdateKansibleRC reads the Ansible inventory and the RC YAML for the hosts and updates it in Kubernetes
 // along with removing any remaining pods which are running against old hosts that have been removed from the inventory
-func UpdateKansibleRC(hostEntries []*HostEntry, hosts string, c *client.Client, ns string, rcFile string, replicas int) (*api.ReplicationController, error) {
+func UpdateKansibleRC(hostEntries []*HostEntry, hosts string, f *cmdutil.Factory, c *client.Client, ns string, rcFile string, replicas int) (*api.ReplicationController, error) {
 	variables, err := LoadAnsibleVariables(hosts)
 	if err != nil {
 		return nil, err
@@ -477,7 +480,95 @@ func UpdateKansibleRC(hostEntries []*HostEntry, hosts string, c *client.Client, 
 		log.Info("Failed to update the RC, could be concurrent update failure: %s", err)
 		return nil, err
 	}
-	return rc, nil
+
+	err = applyOtherKubernetesResources(f, c, ns, rcFile, variables)
+	return rc, err
+}
+
+func applyOtherKubernetesResources(f *cmdutil.Factory, c *client.Client, ns string, rcFile string, variables map[string]string) error {
+	dir := filepath.Dir(rcFile)
+	if len(dir) == 0 {
+		dir = "."
+	}
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		name := file.Name()
+		lower := strings.ToLower(name)
+		ext := filepath.Ext(lower)
+		if !file.IsDir() && lower != "rc.yml" {
+			resource := false
+			switch ext {
+			case ".json":
+				resource = true
+			case ".js":
+				resource = true
+			case ".yml":
+				resource = true
+			case ".yaml":
+				resource = true
+			}
+			if resource {
+				fullpath := filepath.Join(dir, name)
+				err = applyOtherKubernetesResource(f, c, ns, fullpath, variables)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+
+func applyOtherKubernetesResource(f *cmdutil.Factory, c *client.Client, ns string, file string, variables map[string]string) error {
+	log.Info("applying kubernetes resource: %s", file)
+	data, err := LoadFileAndReplaceVariables(file, variables)
+	if err != nil {
+		return err
+	}
+	// TODO the following should work ideally but something's wrong with the loading of versioned schemas...
+	//return k8s.ApplyResource(f, c, ns, data, file)
+
+
+	// lets use the `oc` binary instead
+	binary, err := exec.LookPath("oc")
+    if err != nil {
+		var err2 error
+		binary, err2 = exec.LookPath("kubectl")
+		if err2 != nil {
+			return err
+		}
+    }
+	cmd := exec.Command(binary, "apply", "-f", "-")
+	cmd.Stdin = bytes.NewReader(data)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("Unable to setup stdout for command %s: %v", binary, err)
+	}
+	go io.Copy(os.Stdout, stdout)
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("Unable to setup stderr for command %s: %v", binary, err)
+	}
+	go io.Copy(os.Stderr, stderr)
+
+	err = cmd.Start()
+	if err != nil {
+		log.Err("Failed to start command %s. %s\n", binary, err)
+		return err
+	}
+
+	err = cmd.Wait()
+	if err != nil {
+		log.Err("Failed to complete command %s. %s", binary, err)
+		return err
+	}
+    return err
 }
 
 func generatePrivateKeySecrets(c *client.Client, ns string, hostEntries []*HostEntry, rc *api.ReplicationController, podSpec *api.PodSpec, container *api.Container) error {
