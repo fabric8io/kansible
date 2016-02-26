@@ -431,7 +431,16 @@ func UpdateKansibleRC(hostEntries []*HostEntry, hosts string, f *cmdutil.Factory
 	}
 
 	if len(serviceAccountName) > 0 {
-		k8s.EnsureServiceAccountExists(c, ns, serviceAccountName)
+		created, err := k8s.EnsureServiceAccountExists(c, ns, serviceAccountName)
+		if err != nil {
+			return nil, err
+		}
+		if created {
+			err = ensureSCCExists(ns, serviceAccountName)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	isUpdate := true
@@ -581,6 +590,86 @@ func applyOtherKubernetesResource(f *cmdutil.Factory, c *client.Client, ns strin
 	return nil
 }
 
+
+func ensureSCCExists(ns string, serviceAccountName string) error {
+	binary, err := exec.LookPath("oc")
+	if err != nil {
+		// no openshift so ignore
+		return nil
+	}
+
+	text, err := getCommandOutputString(binary, []string{"export", "scc", serviceAccountName}, os.Stdin)
+	if err != nil {
+		log.Debug("Failed to get SecurityContextConstraints %s. %s", serviceAccountName, err)
+	}
+	if err != nil || len(text) == 0 {
+		text = `
+apiVersion: v1
+kind: SecurityContextConstraints
+groups:
+- system:cluster-admins
+- system:nodes
+metadata:
+  creationTimestamp: null
+  name: ` + serviceAccountName + `
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+users:
+`
+	}
+	// lets ensure there's a users section
+	if !strings.Contains(text, "\nusers:") {
+		text = text + "\nusers:\n"
+	}
+
+	line := "system:serviceaccount:" + ns + ":" + serviceAccountName
+
+	if strings.Contains(text, line) {
+		log.Info("No need to modify SecurityContextConstraints as it already contains line for namespace %s and service account %s", ns, serviceAccountName)
+		return nil
+	}
+
+	text = text + "\n- " + line + "\n"
+	log.Debug("created SecurityContextConstraints YAML: %s", text)
+
+	log.Info("Applying changes for SecurityContextConstraints %s for namespace %s and ServiceAccount %s", serviceAccountName, ns, serviceAccountName)
+	reader := bytes.NewReader([]byte(text))
+	err = runCommand(binary, []string{"apply", "-f", "-"}, reader)
+	if err != nil {
+		log.Err("Failed to update OpenShift SecurityContextConstraints named %s. %s", serviceAccountName, err)
+	}
+	return err
+}
+
+
+func getCommandOutputString(binary string, args []string, reader io.Reader) (string, error) {
+	cmd := exec.Command(binary, args...)
+	cmd.Stdin = reader
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return "", fmt.Errorf("Unable to setup stderr for command %s: %v", binary, err)
+	}
+	go io.Copy(os.Stderr, stderr)
+
+	err = cmd.Start()
+	if err != nil {
+		return "", err
+	}
+
+	err = cmd.Wait()
+	if err != nil {
+		return "", err
+	}
+    return out.String(), err
+}
 func runCommand(binary string, args []string, reader io.Reader) error {
 	cmd := exec.Command(binary, args...)
 	cmd.Stdin = reader
@@ -599,13 +688,11 @@ func runCommand(binary string, args []string, reader io.Reader) error {
 
 	err = cmd.Start()
 	if err != nil {
-		//log.Err("Failed to start command %s. %s\n", binary, err)
 		return err
 	}
 
 	err = cmd.Wait()
 	if err != nil {
-		//log.Err("Failed to complete command %s. %s", binary, err)
 		return err
 	}
     return err

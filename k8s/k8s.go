@@ -241,9 +241,10 @@ func EnsurePodSpecHasSecretVolume(podSpec *api.PodSpec, name string, secretName 
 
 
 // EnsureServiceAccountExists ensures that there is a service account created for the given name
-func EnsureServiceAccountExists(c *client.Client, ns string, serviceAccountName string) error {
+func EnsureServiceAccountExists(c *client.Client, ns string, serviceAccountName string) (bool, error) {
 	saClient := c.ServiceAccounts(ns)
 	sa, err := saClient.Get(serviceAccountName)
+	created := false
 	if err != nil || sa == nil {
 		// lets try create the SA
 		sa = &api.ServiceAccount{
@@ -253,8 +254,11 @@ func EnsureServiceAccountExists(c *client.Client, ns string, serviceAccountName 
 		}
 		log.Info("Creating ServiceAccount %s", serviceAccountName)
 		_, err = saClient.Create(sa)
+		if err == nil {
+			created = true
+		}
 	}
-	return nil
+	return created, err
 }
 
 // ApplyResource applies the given data as a kubernetes resource
