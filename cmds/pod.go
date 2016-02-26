@@ -46,8 +46,6 @@ func Pod(c *cli.Context) {
 			ns = "default"
 		}
 	}
-	log.Info("Using Kubernetes namespace %s", ns)
-
 	rcName, err := osExpandAndVerify(c, "rc")
 	if err != nil {
 		fail(err)
@@ -102,7 +100,6 @@ func Pod(c *cli.Context) {
 		fail(fmt.Errorf("Could not find a command to execute from the environment variable%s: %s", plural, strings.Join(commandEnvVars, ", ")))
 	}
 
-	log.Info("running command on a host from %s and command `%s`", hosts, command)
 	bash := osExpand(c, "bash")
 	if len(bash) > 0 {
 		err = generateBashScript(bash, connection)
@@ -111,9 +108,7 @@ func Pod(c *cli.Context) {
 		}
 	}
 
-	log.Info("using connection %s", connection)
 	if connection == ansible.ConnectionWinRM {
-		log.Info("Using WinRM to connect to the hosts %s", hosts)
 		password := hostEntry.Password
 		if len(password) == 0 {
 			password, err = osExpandAndVerify(c, "password")
@@ -139,8 +134,8 @@ func generateBashScript(file string, connection string) error {
 	}
 	text := `#!/bin/sh
 echo "opening shell on remote machine..."
-export KANSIBLE_IS_BASH_SHELL=true
-export KANSIBLE_PORT_FORWARD=false
+export ` + ansible.EnvIsBashShell + `=true
+export ` + ansible.EnvPortForward + `=false
 kansible pod appservers ` + shellCommand + "\n";
 	return ioutil.WriteFile(file, []byte(text), 0555)
 }

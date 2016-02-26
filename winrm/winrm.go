@@ -30,7 +30,7 @@ func RemoteWinRmCommand(user string, password string, host string, port string, 
 
 	isBash := false
 	isBashShellText := os.Getenv(ansible.EnvIsBashShell)
-	if len(isBashShellText) > 0 && strings.ToLower(isBashShellText) == "false" {
+	if len(isBashShellText) > 0 && strings.ToLower(isBashShellText) == "true" {
 		isBash = true
 	}
 	if rc.ObjectMeta.Annotations != nil && !isBash {
@@ -73,7 +73,14 @@ func RemoteWinRmCommand(user string, password string, host string, port string, 
 	go io.Copy(os.Stderr, cmd.Stderr)
 
 	cmd.Wait()
-	shell.Close()
+
+	exitCode := cmd.ExitCode()
+	if exitCode > 0 {
+		return fmt.Errorf("Failed to run command '%s' got exit code %d", commandText, exitCode)
+	}
+
+	// TODO
+	// return cmd.Error()
 	return nil
 }
 

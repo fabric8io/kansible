@@ -211,7 +211,7 @@ func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client,
 			metadata.Annotations = make(map[string]string)
 		}
 		annotations := metadata.Annotations
-		log.Info("found RC with name %s.%s and version %s", ns, rcName, resourceVersion)
+		log.Info("Using ReplicationController with namespace %s name %s and version %s", ns, rcName, resourceVersion)
 
 		hostsText := annotations[HostInventoryAnnotation]
 		if len(hostsText) == 0 {

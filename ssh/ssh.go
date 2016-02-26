@@ -15,6 +15,8 @@ func RemoteSSHCommand(user string, privateKey string, host string, port string, 
 	if len(privateKey) == 0 {
 		return fmt.Errorf("Could not find PrivateKey for entry %s", host)
 	}
+	log.Info("Connecting to host over SSH on host %s and port %d with user %s with command `%s`", host, port, user, cmd)
+
 	hostPort := host + ":" + port
 
 	sshConfig := &ssh.ClientConfig{
@@ -24,7 +26,7 @@ func RemoteSSHCommand(user string, privateKey string, host string, port string, 
 		},
 	}
 	if sshConfig == nil {
-		log.Info("Whoah!")
+		log.Warn("No sshConfig could be created!")
 	}
 	connection, err := ssh.Dial("tcp", hostPort, sshConfig)
 	if err != nil {
