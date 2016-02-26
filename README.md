@@ -29,11 +29,8 @@ Kansible lets you slowly migrate to a pure container based Docker world while us
 * You can open a shell into the remote process machine via the CLI, REST API or web console
 
 <p align="center">
-  <a href="http://github.com/fabric8io/kansible/">
-  <!--
-  	<img src="https://raw.githubusercontent.com/fabric8io/kansible/master/docs/images/kansible-demo.png" height="200" width="200" alt="kansible logo"/>
-  	-->
-  	<img src="docs/images/kansible-demo.png" height="250" width="600" alt="kansible logo"/>
+  <a href="https://github.com/fabric8io/kansible/master/docs/images/kansible-demo.png">
+  	<img src="https://raw.githubusercontent.com/fabric8io/kansible/master/docs/images/kansible-demo.png" height="250" width="600" alt="kansible logo"/>
   </a>
 </p>
 
