@@ -24,9 +24,19 @@ Kansible lets you slowly migrate to a pure container based Docker world while us
 * Reuse Kubernetes [liveness checks](http://kubernetes.io/v1.1/docs/user-guide/liveness/README.html) so that Kubernetes can monitor the state of your process and restart if it goes bad  
 * Reuse Kubernetes [readiness checks](http://kubernetes.io/v1.1/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks) so that Kubernetes can know when your process can be included into the [internal or external service load balancer](http://kubernetes.io/v1.1/docs/user-guide/services.html) 
 * You can view the logs of all your processes in the canonical kubernetes way via the CLI, REST API or web console
-* You can open a shell into the remote process machine via the CLI, REST API or web console
 * Port forwarding works from the pods to the remote processes so that you can reuse [Kubernetes Services](http://kubernetes.io/v1.1/docs/user-guide/services.html) to load balance across your processes automatically
 * [Centralised logging](http://fabric8.io/guide/logging.html) and [metrics and alerting](http://fabric8.io/guide/metrics.html) works equally across your containers and processes
+* You can open a shell into the remote process machine via the CLI, REST API or web console
+
+<p align="center">
+  <a href="http://github.com/fabric8io/kansible/">
+  <!--
+  	<img src="https://raw.githubusercontent.com/fabric8io/kansible/master/docs/images/kansible-demo.png" height="200" width="200" alt="kansible logo"/>
+  	-->
+  	<img src="docs/images/kansible-demo.png" height="250" width="600" alt="kansible logo"/>
+  </a>
+</p>
+
 
 ## How it works
 
