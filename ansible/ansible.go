@@ -64,6 +64,10 @@ const (
 // opening a remote shell
 	EnvBash = "KANSIBLE_BASH"
 
+// EnvIsBashShell is used to indicate of the command running remotely on the machine is a bash shell in which case we
+// don't want to delete any previous WinRM shell
+	EnvIsBashShell = "KANSIBLE_IS_BASH_SHELL"
+
 // PlaybookVolumeMount is the volume mount point where the playbook is assumed to be in the supervisor pod
 	PlaybookVolumeMount = "/playbook"
 
@@ -670,6 +674,7 @@ func getCommandOutputString(binary string, args []string, reader io.Reader) (str
 	}
     return out.String(), err
 }
+
 func runCommand(binary string, args []string, reader io.Reader) error {
 	cmd := exec.Command(binary, args...)
 	cmd.Stdin = reader

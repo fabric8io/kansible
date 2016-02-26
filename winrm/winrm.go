@@ -13,6 +13,7 @@ import(
 
 	"k8s.io/kubernetes/pkg/api"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
+	"strings"
 )
 
 // RemoteWinRmCommand runs the remote command on a windows machine
@@ -27,7 +28,12 @@ func RemoteWinRmCommand(user string, password string, host string, port string, 
 		return fmt.Errorf("Could not create WinRM client: %s", err)
 	}
 
-	if rc.ObjectMeta.Annotations != nil {
+	isBash := false
+	isBashShellText := os.Getenv(ansible.EnvIsBashShell)
+	if len(isBashShellText) > 0 && strings.ToLower(isBashShellText) == "false" {
+		isBash = true
+	}
+	if rc.ObjectMeta.Annotations != nil && !isBash {
 		oldShellID := rc.ObjectMeta.Annotations[ansible.WinRMShellAnnotationPrefix + hostName];
 		if len(oldShellID) > 0 {
 			// lets close the previously running shell on this machine
@@ -48,7 +54,7 @@ func RemoteWinRmCommand(user string, password string, host string, port string, 
 	shellID := shell.ShellId
 	log.Info("Created WinRM Shell %s", shellID)
 
-	if rc != nil && c != nil {
+	if rc != nil && c != nil && !isBash {
 		rc.ObjectMeta.Annotations[ansible.WinRMShellAnnotationPrefix + hostName] = shellID
 		_, err = c.ReplicationControllers(rc.ObjectMeta.Namespace).UpdateStatus(rc)
 		if err != nil {
