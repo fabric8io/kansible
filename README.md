@@ -50,13 +50,15 @@ Then we use Kubernetes (and kansible pods) as the alternative to unix and window
 
 ### Kubernetes perspective on Kansible
  
-If you already use Kubernetes then you could look at Kansible as a way of extending the reach of Kubernetes to manage docker containers on a host; but also remote processes on operating systems that don't support Docker. That then makes Kubernetes the orchestrator of all your software; whether its dockerized or not!
+If you already use Kubernetes then you could look at Kansible as a way of extending the reach of Kubernetes to manage both docker containers on a host that supports docker plus remote processes on operating systems that don't support Docker. That then makes Kubernetes the orchestrator of all your software; whether its dockerized or not! 
+
+All your processes are belong to us! :) 
 
 Longer term it would be great for Docker to be ported to more operating systems; along with the kubelet. So ideally more operating systems could use native docker and kubelet; in which case there's less need for kansible. But at the time of writing, that goal is looking some way off for older versions of Windows along with AIX, Solaris and HPUX.
 
-Whats really compelling about using Kubernetes to manage docker containers and operating system processes via Kansible is that you can mix and match but all the while use a single orchestrator platform, Kubernetes, a single REST API, CLI tools and web console - with standard service discovery, load balancing and management functions.
+Whats really compelling about using Kubernetes to manage docker containers and operating system processes via Kansible is that you can mix and match on a per microservice basis - use the right tool for the job right now - but all the while use a single orchestrator platform, Kubernetes, a single REST API, CLI tools and web console - with standard service discovery, load balancing and management functions.
 
-Using docker is more optimal; so we hope over time that you can use more docker and less kansible; but its going to take our industry a while to dockerize all the things and move everything to linux; or to have fully working docker + kubernetes on Windows + all flavours of Unix. Until then, kansible can help!
+Using docker is more optimal; so we hope over time that you can use more docker and less kansible; but its going to take our industry a while to dockerize all the things and move everything to linux; or to have fully working docker + kubernetes on Windows + all flavours of Unix. Until then, kansible can help! At least we can now pretend everything's dockerized and running on Linux from an orchestration and management perspective ;)
 
 
 ## How to use Kansible
@@ -69,8 +71,11 @@ You use kansible as follows:
 * define a Replication Controller YAML file at `kubernetes/$HOSTS/rc.yml` for running the command for your process [like this example](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/kubernetes/appservers/rc.yml#L15-L16). 
 * the RC YAML file contains the command you need to run remotely to execute your process via [`$KANSIBLE_COMMAND`](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/kubernetes/appservers/rc.yml#L15-L16)
   * you can think of the RC YAML file as like the systemd configuration file, describing the command to run to startup the application. Only its a single file for the entire cluster which is stored in kubernetes. Plus it can include [readiness and liveness probes too](http://kubernetes.io/v1.1/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks)
-. You can use the `{{ foo_bar }}` ansible variable expressions in the RC YAML to refer to variables from your [global ansible variables file](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/group_vars/appservers)
-* To take advantage of Kubernetes services, you can also define any number of Service YAML files at `kubernetes/$HOSTS/service.yml` (they can be any file name in that folder so long as they are `.yml` or `.json` files). See the [Kubernetes Services example](#trying-out-kubernetes-services) and its [kubernetes/appservers/service.yml](https://github.com/fabric8io/fabric8-ansible-hawtapp/blob/master/kubernetes/appservers/service.yml)  file for how to do this. 
+. 
+  * You can use the `{{ foo_bar }}` ansible variable expressions in the RC YAML to refer to variables from your [global ansible variables file](https://github.com/fabric8io/fabric8-ansible-spring-boot/blob/master/group_vars/appservers)
+* to take advantage of Kubernetes services, you can also define any number of Service YAML files at `kubernetes/$HOSTS/service.yml` 
+  * they can be named anhyhting you like so long as they are valid kubernetes YAML or JSON and are in the same folder as the RC.yml
+  * see the [Kubernetes Services example](#trying-out-kubernetes-services) and its [kubernetes/appservers/service.yml](https://github.com/fabric8io/fabric8-ansible-hawtapp/blob/master/kubernetes/appservers/service.yml)  file for how to do this. 
 * whenever the playbook git repo changes, run the **kansible rc** command inside a clone of the playbook git repository:
 
 ```bash
@@ -88,11 +93,11 @@ So for each remote process on Windows, Linux, Solaris, AIX, HPUX kansible will c
 * As processes start and stop, you'll see the processes appear or disappear inside kubernetes, the CLI, REST API or the console as a kansible pod.
 * You can scale up and down the kansible Replication Controller via CLI, REST API or console.
 * You can then view the logs of any process in the usual kubernetes way via the command line, REST API or web console. 
-* [Centralised logging](http://fabric8.io/guide/logging.html) then works great on all your processes (providing the command you run outputs logs to `stdout` / `stderr`)
+* [Centralised logging](http://fabric8.io/guide/logging.html) then works great on all your processes (providing the command you run outputs logs to `stdout` / `stderr`
 
 ### Exposing ports
 
-Any ports defined in the Replication Controller YAML file will be automatically forwarded to the remote process.
+Any ports defined in the Replication Controller YAML file will be automatically forwarded to the remote process. See [this example rc.yml file](https://github.com/fabric8io/fabric8-ansible-hawtapp/blob/master/kubernetes/appservers/rc.yml#L19-L21) to see how to expose ports.
 
 This means you can take advantage of things like [centralised metrics and alerting](http://fabric8.io/guide/metrics.html), liveness checks, Kubernetes Services along with the built in service discovery and load balancing inside Kubernetes!
 
@@ -111,13 +116,13 @@ Then you'll get a remote shell on the windows or unix box!
 Before you start with the kansible examples you'll need:
 
 * [Download a release](https://github.com/fabric8io/kansible/releases) and add `kansible` to your `$PATH` 
-* Or [Build kansible](https://github.com/fabric8io/kansible/blob/master/BUILDING.md) then add the `$PWD/bin` folder to your `$PATH` so that you can type in `kansible` on the command line
+  * Or [Build kansible](https://github.com/fabric8io/kansible/blob/master/BUILDING.md) then add the `$PWD/bin` folder to your `$PATH` so that you can type in `kansible` on the command line
 * Download and install [VirtualBox](https://www.virtualbox.org/wiki/Downloads)
 * Download and install [Vagrant](http://www.vagrantup.com/downloads.html)
 
 These examples assume you have a working [Kubernetes](http://kubernetes.io/) or [OpenShift](https://www.openshift.org/) cluster running.
 
-To get started quickly try using the [fabric8 vagrant image that includes OpenShift Origin](http://fabric8.io/guide/getStarted/vagrant.html) as the kubernetes cluster.
+If you don't yet have a Kubernetes cluster to play with, try using the [Fabric8 Vagrant image that includes OpenShift Origin](http://fabric8.io/guide/getStarted/vagrant.html) as the kubernetes cluster.
 
 ### [fabric8-ansible-spring-boot](https://github.com/fabric8io/fabric8-ansible-spring-boot)
 
@@ -192,6 +197,8 @@ The pods should now start up for each host in the inventory.
 ### Using windows machines
 
 This example uses 1 windows box and 1 linux box in the inventory. The example shows that kansible can support both operating systems just fine; it does require the playbooks to handle the differences though.
+
+Also you typically will need to use different commands to run on Unix versus Windows which is configured in the [rc.yml file](https://github.com/fabric8io/fabric8-ansible-hawtapp/blob/master/kubernetes/appservers/rc.yml#L15-L18). For more details see the [documentation on the KANSIBLE_COMMAND_WINRM environment variable](#kansible_command_winrm)  
 
 To use windows you may need to first make sure you've installed **pywinrm**:
 
