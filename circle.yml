@@ -11,6 +11,7 @@ dependencies:
     - mkdir -p "/home/ubuntu/.go_workspace/src/$IMPORT_PATH"
     - rsync -azC --delete ./ "/home/ubuntu/.go_workspace/src/$IMPORT_PATH/"
   override:
+    - rm -rf vendor
     - make bootstrap build:
         pwd: "../.go_workspace/src/$IMPORT_PATH/"
 
