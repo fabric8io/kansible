@@ -1,20 +1,16 @@
 machine:
-#  services:
-#    - docker
   environment:
-    GOPATH: ${HOME}/kansible/gopath:${GOPATH}
-    PATH: ${HOME}/kansible/bin:${PATH}
+    IMPORT_PATH: "github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME"
 
 dependencies:
   pre:
     - wget "https://github.com/Masterminds/glide/releases/download/0.8.2/glide-0.8.2-linux-amd64.tar.gz"
-    - mkdir -p bin
-    - tar -vxz -C bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
-    - mkdir -p gopath/src/github.com/fabric8io
-    - ln -s $(pwd) gopath/src/github.com/fabric8io/kansible
+    - tar -vxz -C $GOPATH/bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
+    - mkdir -p "$GOPATH/src/$IMPORT_PATH"
+    - rsync -azC --delete ./ "$GOPATH/src/$IMPORT_PATH/"
   override:
     - make bootstrap build:
-      pwd: gopath/src/github.com/fabric8io/kansible
+        pwd: "$GOPATH/src/$IMPORT_PATH/"
   cache_directories:
     - vendor
 
