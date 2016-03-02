@@ -16,14 +16,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ghodss/yaml"
 	"k8s.io/kubernetes/pkg/api"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 
 	"github.com/fabric8io/kansible/k8s"
 	"github.com/fabric8io/kansible/log"
-
-	"github.com/ghodss/yaml"
 )
 
 const (

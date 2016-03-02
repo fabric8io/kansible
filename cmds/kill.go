@@ -4,13 +4,12 @@ import (
 	"fmt"
 
 	"github.com/codegangsta/cli"
+	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 
 	"github.com/fabric8io/kansible/ansible"
 	"github.com/fabric8io/kansible/k8s"
 	"github.com/fabric8io/kansible/log"
 	"github.com/fabric8io/kansible/winrm"
-
-	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 )
 
 // Kill kills the pending windows shell of the current pod if its still running

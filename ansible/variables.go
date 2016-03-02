@@ -1,12 +1,11 @@
 package ansible
 
 import (
+	"io/ioutil"
 	"os"
 	"strings"
 
 	"github.com/ghodss/yaml"
-
-	"github.com/fabric8io/kansible/k8s"
 )
 
 const (
@@ -21,11 +20,11 @@ func LoadAnsibleVariables(hosts string) (map[string]string, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return map[string]string{}, nil
 	}
-	variables := map[string]string{}
-	data, err := k8s.ReadBytesFromFile(path)
+	data, err := ioutil.ReadFile(path)
 	if err != nil {
-		return variables, err
+		return nil, err
 	}
+	variables := map[string]string{}
 	err = yaml.Unmarshal(data, &variables)
 	if err != nil {
 		return variables, err
@@ -49,7 +48,7 @@ func ReplaceVariables(text string, variables map[string]string) string {
 // LoadFileAndReplaceVariables loads the given file and replaces all the Ansible variable expressions
 // and then returns the data
 func LoadFileAndReplaceVariables(filename string, variables map[string]string) ([]byte, error) {
-	data, err := k8s.ReadBytesFromFile(filename)
+	data, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return nil, err
 	}

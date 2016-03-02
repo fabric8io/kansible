@@ -36,7 +36,7 @@ func GetThisPodName() (string, error) {
 
 // ReadReplicationControllerFromFile reads the ReplicationController object from the given file name
 func ReadReplicationControllerFromFile(filename string) (*api.ReplicationController, error) {
-	data, err := ReadBytesFromFile(filename)
+	data, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return nil, err
 	}
@@ -50,19 +50,6 @@ func ReadReplicationController(data []byte) (*api.ReplicationController, error) 
 		return nil, err
 	}
 	return &rc, nil
-}
-
-// ReadBytesFromFile loads the given file into memory
-func ReadBytesFromFile(filename string) ([]byte, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	data, err := ioutil.ReadAll(file)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
 }
 
 // PodIsRunning returns true if the given pod is running in the given list of all pods

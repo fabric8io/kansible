@@ -7,14 +7,13 @@ import (
 	"strings"
 
 	"github.com/codegangsta/cli"
+	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 
 	"github.com/fabric8io/kansible/ansible"
 	"github.com/fabric8io/kansible/k8s"
 	"github.com/fabric8io/kansible/log"
 	"github.com/fabric8io/kansible/ssh"
 	"github.com/fabric8io/kansible/winrm"
-
-	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 )
 
 // Pod runs the kansible pod for a given group of hosts in an Ansible playbook
