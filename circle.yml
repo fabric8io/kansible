@@ -12,7 +12,7 @@ dependencies:
     - rsync -azC --delete ./ "/home/ubuntu/.go_workspace/src/$IMPORT_PATH/"
   override:
     - make bootstrap build:
-        pwd: "/home/ubuntu/.go_workspace/src/$IMPORT_PATH/"
+        pwd: "../.go_workspace/src/$IMPORT_PATH/"
 
 test:
   override:
