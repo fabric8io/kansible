@@ -2,7 +2,6 @@ machine:
 #  services:
 #    - docker
   environment:
-    GO15VENDOREXPERIMENT: 1
     GOPATH: ${HOME}/kansible/gopath:${GOPATH}
     PATH: ${HOME}/kansible/bin:${PATH}
 
@@ -14,16 +13,14 @@ dependencies:
     - mkdir -p gopath/src/github.com/fabric8io
     - ln -s $(pwd) gopath/src/github.com/fabric8io/kansible
   override:
-    - go version
-    - glide --version
     - make bootstrap build:
-        pwd: gopath/src/github.com/fabric8io/kansible
+      pwd: gopath/src/github.com/fabric8io/kansible
   cache_directories:
     - vendor
 
 test:
   override:
-    - echo yes
+    - make test lint
 
 # Disabled for now to avoid conflicts with the Jenkins builds:
 

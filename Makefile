@@ -3,7 +3,7 @@ $(error No GOPATH set)
 endif
 
 NAME := kansible
-VERSION := $(shell cat version/VERSION)
+CURRENT_VERSION := $(shell cat version/VERSION)
 
 GO_VERSION := $(shell go version)
 ROOT_PACKAGE := $(shell go list .)
@@ -20,35 +20,27 @@ XBUILDFLAGS := -ldflags \
 
 BIN_DIR := bin
 DIST_DIR := _dist
-GO_PACKAGES := ansible cmds k8s log ssh winrm
+GO := GO15VENDOREXPERIMENT=1 go
+GO_PACKAGES := $(shell $(GO) list ./... | grep -v /vendor/)
+SRCS := $(shell find -type d -not -wholename './.git*' -not -wholename './vendor*' -not -wholename '.')
 MAIN_GO := kansible.go
 KANSIBLE_BIN := $(BIN_DIR)/kansible
 
-VERSION_PREFIX := $(shell git describe --tags --abbrev=0 2>/dev/null)
+VERSION := $(CURRENT_VERSION)+$(shell git rev-parse --short HEAD)
 
-ifndef VERSION_PREFIX
-  VERSION_PREFIX := v0.1.0
-endif
-
-VERSION := ${VERSION_PREFIX}+$(shell git rev-parse --short HEAD)
-
-export GO15VENDOREXPERIMENT=1
-
-ifndef VERSION
-  VERSION := git-$(shell git rev-parse --short HEAD)
-endif
+LINTERS := --disable-all --enable=vet --enable=golint --enable=errcheck --enable=ineffassign --enable=interfacer --enable=goimports --enable=gofmt
 
 build: $(MAIN_GO)
-	go build -o $(KANSIBLE_BIN) -ldflags "-X main.version=${VERSION}" $<
+	$(GO) build -o $(KANSIBLE_BIN) -ldflags "-X main.version=$(VERSION)" $<
 
 bootstrap:
-	go get -u github.com/golang/lint/golint github.com/mitchellh/gox
+	$(GO) get -u github.com/golang/lint/golint github.com/mitchellh/gox github.com/alecthomas/gometalinter
 	glide up
 
 build-all:
 	gox -verbose \
-	-ldflags "-X main.version=${VERSION}" \
-	-os="linux darwin " \
+	-ldflags "-X main.version=$(VERSION)" \
+	-os="linux darwin windows" \
 	-arch="amd64 386" \
 	-output="$(DIST_DIR)/{{.OS}}-{{.Arch}}/{{.Dir}}" .
 
@@ -61,8 +53,8 @@ dist: build-all
 	cd -
 
 install: build
-	install -d ${DESTDIR}/usr/local/bin/
-	install -m 755 $(KANSIBLE_BIN) ${DESTDIR}/usr/local/bin/kansible
+	install -d $(DESTDIR)/usr/local/bin/
+	install -m 755 $(KANSIBLE_BIN) $(DESTDIR)/usr/local/bin/kansible
 
 prep-bintray-json:
 # TRAVIS_TAG is set to the tag name if the build is a tag
@@ -75,38 +67,30 @@ else
 endif
 
 quicktest:
-	go test -short ./ $(addprefix ./,$(GO_PACKAGES))
+	$(GO) test -short $(GO_PACKAGES)
 
-test: test-style
-	go test -v ./ $(addprefix ./,$(GO_PACKAGES))
+test:
+	$(GO) test -v $(GO_PACKAGES)
 
-test-style:
-	@if [ $(shell gofmt -e -l -s *.go $(GO_PACKAGES)) ]; then \
-		echo "gofmt check failed:"; gofmt -e -l -s *.go $(GO_PACKAGES); exit 1; \
-	fi
-	@for i in . $(GO_PACKAGES); do \
-		golint $$i; \
-	done
-	@for i in . $(GO_PACKAGES); do \
-		go vet github.com/fabric8io/kansible/$$i; \
-	done
+lint:
+	@echo "Linting does not currently fail the build but is likely to do so in future - fix stuff you see, when you see it please"
+	@export TMP=$(shell mktemp -d) && cp -r vendor $${TMP}/src && GOPATH=$${TMP}:$${GOPATH} gometalinter --vendor --deadline=60s $(LINTERS) ./... || true
 
 docker-scratch:
-	gox -verbose -ldflags "-X main.version=${VERSION}" -os="linux" -arch="amd64" \
+	gox -verbose -ldflags "-X main.version=$(VERSION)" -os="linux" -arch="amd64" \
 	   -output="bin/kansible-docker" .
-	docker build -f Dockerfile.scratch -t "fabric8/kansible:0.0.1-scratch"	.
-	docker tag -f "fabric8/kansible:0.0.1-scratch"	"fabric8/kansible:latest"
+	docker build -f Dockerfile.scratch -t "fabric8/kansible:scratch" .
 
 release:
 	rm -rf build release && mkdir build release
 	for os in linux darwin ; do \
-		GO15VENDOREXPERIMENT=1 CGO_ENABLED=0 GOOS=$$os ARCH=amd64 go build -o build/$(NAME)-$$os-amd64 $(BUILDFLAGS) -a $(NAME).go ; \
-		tar --transform 's|^build/||' --transform 's|-.*||' -czvf release/$(NAME)-$(VERSION)-$$os-amd64.tar.gz build/$(NAME)-$$os-amd64 README.md LICENSE ; \
+		GOOS=$$os ARCH=amd64 $(GO) build -o build/$(NAME)-$$os-amd64 $(BUILDFLAGS) -a $(NAME).go ; \
+		tar --transform 's|^build/||' --transform 's|-.*||' -czvf release/$(NAME)-$(CURRET_VERSION)-$$os-amd64.tar.gz build/$(NAME)-$$os-amd64 README.md LICENSE ; \
 	done
-	GO15VENDOREXPERIMENT=1 CGO_ENABLED=0 GOOS=windows ARCH=amd64 go build -o build/$(NAME)-$(VERSION)-windows-amd64.exe $(BUILDFLAGS) -a $(NAME).go
-	zip --junk-paths release/$(NAME)-$(VERSION)-windows-amd64.zip build/$(NAME)-$(VERSION)-windows-amd64.exe README.md LICENSE
-	go get -u github.com/progrium/gh-release
-	gh-release create fabric8io/$(NAME) $(VERSION) $(BRANCH) $(VERSION)
+	CGO_ENABLED=0 GOOS=windows ARCH=amd64 $(GO) build -o build/$(NAME)-$(CURRENT_VERSION)-windows-amd64.exe $(BUILDFLAGS) -a $(NAME).go
+	zip --junk-paths release/$(NAME)-$(VERSION)-windows-amd64.zip build/$(NAME)-$(CURRENT_VERSION)-windows-amd64.exe README.md LICENSE
+	$(GO) get -u github.com/progrium/gh-release
+	gh-release create fabric8io/$(NAME) $(CURRENT_VERSION) $(BRANCH) $(CURRENT_VERSION)
 
 .PHONY: release clean
 
@@ -121,4 +105,4 @@ release:
 				release \
 				test \
 				test-charts \
-				test-style
+				lint
