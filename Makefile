@@ -35,7 +35,7 @@ build: $(MAIN_GO)
 
 bootstrap:
 	$(GO) get -u github.com/golang/lint/golint github.com/mitchellh/gox github.com/alecthomas/gometalinter
-	glide up
+	GO15VENDOREXPERIMENT=1 glide up
 
 build-all:
 	gox -verbose \
