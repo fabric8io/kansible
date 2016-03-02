@@ -5,7 +5,7 @@ machine:
 dependencies:
   pre:
     - wget "https://github.com/Masterminds/glide/releases/download/0.8.2/glide-0.8.2-linux-amd64.tar.gz"
-    - tar -vxz -C $GOPATH/bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
+    - tar -vxz -C /home/ubuntu/.go_workspace/bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
     - mkdir -p "$GOPATH/src/$IMPORT_PATH"
     - rsync -azC --delete ./ "$GOPATH/src/$IMPORT_PATH/"
   override:
