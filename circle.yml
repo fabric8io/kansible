@@ -4,15 +4,15 @@ machine:
 
 dependencies:
   pre:
+    - echo $PATH
     - wget "https://github.com/Masterminds/glide/releases/download/0.8.2/glide-0.8.2-linux-amd64.tar.gz"
+    - mkdir /home/ubuntu/.go_workspace/bin
     - tar -vxz -C /home/ubuntu/.go_workspace/bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
-    - mkdir -p "$GOPATH/src/$IMPORT_PATH"
-    - rsync -azC --delete ./ "$GOPATH/src/$IMPORT_PATH/"
+    - mkdir -p "/home/ubuntu/.go_workspace/src/$IMPORT_PATH"
+    - rsync -azC --delete ./ "/home/ubuntu/.go_workspace/src/$IMPORT_PATH/"
   override:
     - make bootstrap build:
-        pwd: "$GOPATH/src/$IMPORT_PATH/"
-  cache_directories:
-    - vendor
+        pwd: "/home/ubuntu/.go_workspace/src/$IMPORT_PATH/"
 
 test:
   override:
