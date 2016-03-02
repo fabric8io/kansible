@@ -10,7 +10,7 @@ node{
     }
 
     retry(3){
-      sh "cd /go/src/workspace/${env.JOB_NAME} && make build"
+      sh "cd /go/src/workspace/${env.JOB_NAME} && make build test lint"
     }
 
     def imageName = 'kansible'
