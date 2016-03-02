@@ -35,6 +35,7 @@ build: $(MAIN_GO)
 
 bootstrap:
 	$(GO) get -u github.com/golang/lint/golint github.com/mitchellh/gox github.com/alecthomas/gometalinter
+	gometalinter --install --update
 	GO15VENDOREXPERIMENT=1 glide up
 
 build-all:
@@ -74,7 +75,7 @@ test:
 
 lint:
 	@echo "Linting does not currently fail the build but is likely to do so in future - fix stuff you see, when you see it please"
-	@export TMP=$(shell mktemp -d) && cp -r vendor $${TMP}/src && GOPATH=$${TMP}:$${GOPATH} gometalinter --vendor --deadline=60s $(LINTERS) ./... || true
+	@export TMP=$(shell mktemp -d) && cp -r vendor $${TMP}/src && GOPATH=$${TMP}:$${GOPATH} GO15VENDOREXPERIMENT=1 gometalinter --vendor --deadline=60s $(LINTERS) ./... || true
 
 docker-scratch:
 	gox -verbose -ldflags "-X main.version=$(VERSION)" -os="linux" -arch="amd64" \
