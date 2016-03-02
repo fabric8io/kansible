@@ -16,7 +16,7 @@ import (
 )
 
 const (
-// MessageFailedToCreateKubernetesClient is the message to report if a kuberentes client cannot be created
+	// MessageFailedToCreateKubernetesClient is the message to report if a kuberentes client cannot be created
 	MessageFailedToCreateKubernetesClient = "Failed to create Kubernetes client. Maybe you need to run `oc login`?. Error: %s"
 )
 
@@ -74,4 +74,3 @@ func RC(c *cli.Context) {
 		fail(err)
 	}
 }
-

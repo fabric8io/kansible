@@ -6,8 +6,8 @@ import (
 	"io/ioutil"
 	"os"
 
-	"golang.org/x/crypto/ssh"
 	"github.com/fabric8io/kansible/log"
+	"golang.org/x/crypto/ssh"
 )
 
 // RemoteSSHCommand invokes the given command on a host and port
@@ -66,18 +66,17 @@ func RemoteSSHCommand(user string, privateKey string, host string, port string, 
 	}
 	go io.Copy(os.Stderr, stderr)
 
-
 	for envName, envValue := range envVars {
 		log.Info("Setting environment value %s = %s", envName, envValue)
 		if err := session.Setenv(envName, envValue); err != nil {
-		  return fmt.Errorf("Could not set environment variable %s = %s over SSH. This could be disabled by the sshd configuration. See the `AcceptEnv` setting in your /etc/ssh/sshd_config more info: http://linux.die.net/man/5/sshd_config . Error: %s", envName, envValue, err)
+			return fmt.Errorf("Could not set environment variable %s = %s over SSH. This could be disabled by the sshd configuration. See the `AcceptEnv` setting in your /etc/ssh/sshd_config more info: http://linux.die.net/man/5/sshd_config . Error: %s", envName, envValue, err)
 		}
 	}
 
 	log.Info("Running command %s", cmd)
 	err = session.Run(cmd)
 	if err != nil {
-		return fmt.Errorf("Failed to run command: " + cmd + ": %v", err)
+		return fmt.Errorf("Failed to run command: "+cmd+": %v", err)
 	}
 	return nil
 }
@@ -95,4 +94,3 @@ func PublicKeyFile(file string) ssh.AuthMethod {
 	}
 	return ssh.PublicKeys(key)
 }
-

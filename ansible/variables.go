@@ -12,8 +12,8 @@ import (
 const (
 	// AnsibleGlobalVariablesFile is the prefix file name for the Ansible global variables file
 	AnsibleGlobalVariablesFile = "group_vars/"
-
 )
+
 // LoadAnsibleVariables loads the global variables from the Ansible playbook
 // so that we can search and replace them inside other files like the RC.yml
 func LoadAnsibleVariables(hosts string) (map[string]string, error) {
@@ -48,7 +48,7 @@ func ReplaceVariables(text string, variables map[string]string) string {
 
 // LoadFileAndReplaceVariables loads the given file and replaces all the Ansible variable expressions
 // and then returns the data
-func LoadFileAndReplaceVariables(filename string, variables map[string]string) ([]byte, error)  {
+func LoadFileAndReplaceVariables(filename string, variables map[string]string) ([]byte, error) {
 	data, err := k8s.ReadBytesFromFile(filename)
 	if err != nil {
 		return nil, err

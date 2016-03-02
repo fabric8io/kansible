@@ -13,7 +13,6 @@ import (
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 )
 
-
 // Kill kills the pending windows shell of the current pod if its still running
 func Kill(c *cli.Context) {
 	f := cmdutil.NewFactory(nil)
@@ -70,7 +69,7 @@ func Kill(c *cli.Context) {
 	if len(hostsText) == 0 {
 		fail(fmt.Errorf("Could not find annotation %s on ReplicationController %s", ansible.HostInventoryAnnotation, rcName))
 	}
-	shellID := rcAnnotations[ansible.WinRMShellAnnotationPrefix + hostName]
+	shellID := rcAnnotations[ansible.WinRMShellAnnotationPrefix+hostName]
 	if len(shellID) == 0 {
 		log.Info("No annotation `%s` available on pod %s", ansible.WinRMShellAnnotationPrefix, thisPodName)
 		return

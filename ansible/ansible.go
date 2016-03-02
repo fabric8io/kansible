@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"net"
 	"os"
 	"os/exec"
-	"math/rand"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -20,84 +20,83 @@ import (
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 
-	"github.com/fabric8io/kansible/log"
 	"github.com/fabric8io/kansible/k8s"
+	"github.com/fabric8io/kansible/log"
 
 	"github.com/ghodss/yaml"
 )
 
 const (
-// AnsibleHostPodAnnotationPrefix is the annotation prefix used on the RC to associate a host name with a pod name
+	// AnsibleHostPodAnnotationPrefix is the annotation prefix used on the RC to associate a host name with a pod name
 	AnsibleHostPodAnnotationPrefix = "pod.kansible.fabric8.io/"
 
-// HostInventoryAnnotation is the list of hosts from the inventory
+	// HostInventoryAnnotation is the list of hosts from the inventory
 	HostInventoryAnnotation = "kansible.fabric8.io/host-inventory"
 
-// HostNameAnnotation is used to annotate a pod with the host name its processing
+	// HostNameAnnotation is used to annotate a pod with the host name its processing
 	HostNameAnnotation = "kansible.fabric8.io/host-name"
 
-// HostAddressAnnotation is used to annotate a pod with the host address its processing
+	// HostAddressAnnotation is used to annotate a pod with the host address its processing
 	HostAddressAnnotation = "kansible.fabric8.io/host-address"
 
-// WinRMShellAnnotationPrefix stores the shell ID for the WinRM host name on the RC
+	// WinRMShellAnnotationPrefix stores the shell ID for the WinRM host name on the RC
 	WinRMShellAnnotationPrefix = "winrm.shellid.kansible.fabric8.io/"
 
-// EnvHosts is the environment variable on a pod for specifying the Ansible hosts in the inventory
+	// EnvHosts is the environment variable on a pod for specifying the Ansible hosts in the inventory
 	EnvHosts = "KANSIBLE_HOSTS"
 
-// EnvCommand is the environment variable on a pod for specifying the command to run on each host
+	// EnvCommand is the environment variable on a pod for specifying the command to run on each host
 	EnvCommand = "KANSIBLE_COMMAND"
 
-// EnvRC is the environment variable on a pod for the name of the ReplicationController
+	// EnvRC is the environment variable on a pod for the name of the ReplicationController
 	EnvRC = "KANSIBLE_RC"
 
-// EnvNamespace is the environment variable on a pod for the namespace to use
+	// EnvNamespace is the environment variable on a pod for the namespace to use
 	EnvNamespace = "KANSIBLE_NAMESPACE"
 
-// EnvExportEnvVars is the space separated list of environment variables exported to the remote process
+	// EnvExportEnvVars is the space separated list of environment variables exported to the remote process
 	EnvExportEnvVars = "KANSIBLE_EXPORT_ENV_VARS"
 
-// EnvPortForward allows port forwarding to be disabled
+	// EnvPortForward allows port forwarding to be disabled
 	EnvPortForward = "KANSIBLE_PORT_FORWARD"
 
-// EnvBash is the environment variable on a pod for the name of the bash script to generate on startup for
-// opening a remote shell
+	// EnvBash is the environment variable on a pod for the name of the bash script to generate on startup for
+	// opening a remote shell
 	EnvBash = "KANSIBLE_BASH"
 
-// EnvIsBashShell is used to indicate of the command running remotely on the machine is a bash shell in which case we
-// don't want to delete any previous WinRM shell
+	// EnvIsBashShell is used to indicate of the command running remotely on the machine is a bash shell in which case we
+	// don't want to delete any previous WinRM shell
 	EnvIsBashShell = "KANSIBLE_IS_BASH_SHELL"
 
-// PlaybookVolumeMount is the volume mount point where the playbook is assumed to be in the supervisor pod
+	// PlaybookVolumeMount is the volume mount point where the playbook is assumed to be in the supervisor pod
 	PlaybookVolumeMount = "/playbook"
 
-
-// AnsibleVariableHost is the Ansible inventory host variable for the remote host
+	// AnsibleVariableHost is the Ansible inventory host variable for the remote host
 	AnsibleVariableHost = "ansible_host"
 
-// AnsibleVariableUser is the Ansible inventory host variable for the remote user
+	// AnsibleVariableUser is the Ansible inventory host variable for the remote user
 	AnsibleVariableUser = "ansible_user"
 
-// AnsibleVariablePort is the Ansible inventory host variable for the reote port
+	// AnsibleVariablePort is the Ansible inventory host variable for the reote port
 	AnsibleVariablePort = "ansible_port"
 
-// AnsibleVariablePrivateKey is the Ansible inventory host variable for the SSH private key file
+	// AnsibleVariablePrivateKey is the Ansible inventory host variable for the SSH private key file
 	AnsibleVariablePrivateKey = "ansible_ssh_private_key_file"
 
-// AnsibleVariableConnection is the Ansible inventory host variable for the kind of connection; e.g. 'winrm' for windows
+	// AnsibleVariableConnection is the Ansible inventory host variable for the kind of connection; e.g. 'winrm' for windows
 	AnsibleVariableConnection = "ansible_connection"
 
-// AnsibleVariablePassword is the Ansible inventory host variable for the password
+	// AnsibleVariablePassword is the Ansible inventory host variable for the password
 	AnsibleVariablePassword = "ansible_ssh_pass"
 
-// ConnectionWinRM is the value AnsibleVariableConnection of for using Windows with WinRM
+	// ConnectionWinRM is the value AnsibleVariableConnection of for using Windows with WinRM
 	ConnectionWinRM = "winrm"
 
-// AppRunCommand is the Ansible inventory host variable for the run command that is executed on the remote host
+	// AppRunCommand is the Ansible inventory host variable for the run command that is executed on the remote host
 	AppRunCommand = "app_run_command"
 
 	gitURLPrefix = "url = "
-	gitConfig = ".git/config"
+	gitConfig    = ".git/config"
 )
 
 // HostEntry represents a single host entry in an Ansible inventory
@@ -131,9 +130,9 @@ func LoadHostEntries(inventoryFile string, hosts string) ([]*HostEntry, error) {
 		if len(text) > 0 && !strings.HasPrefix(text, "#") {
 			isHost := strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]")
 			if isHost {
-				hostNames = append(hostNames, text[1:len(text) - 1])
+				hostNames = append(hostNames, text[1:len(text)-1])
 			}
-			if (foundHeader) {
+			if foundHeader {
 				if isHost {
 					completed = true
 				} else if !completed {
@@ -158,8 +157,6 @@ func LoadHostEntries(inventoryFile string, hosts string) ([]*HostEntry, error) {
 	return hostEntries, nil
 }
 
-
-
 // LoadHostEntriesFromText loads the host entries from the given text which is typically taken from
 // an annotation on the ReplicationController
 func LoadHostEntriesFromText(text string) ([]*HostEntry, error) {
@@ -176,7 +173,6 @@ func LoadHostEntriesFromText(text string) ([]*HostEntry, error) {
 	}
 	return hostEntries, nil
 }
-
 
 // ChooseHostAndPrivateKey parses the given Ansible inventory file for the hosts
 // and chooses a single host inside it, returning the host name and the private key
@@ -204,7 +200,6 @@ func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client,
 			return nil, nil, err
 		}
 
-
 		metadata := &rc.ObjectMeta
 		resourceVersion := metadata.ResourceVersion
 		if metadata.Annotations == nil {
@@ -229,7 +224,7 @@ func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client,
 			for annKey, podName := range annotations {
 				if strings.HasPrefix(annKey, AnsibleHostPodAnnotationPrefix) {
 					hostName := annKey[len(AnsibleHostPodAnnotationPrefix):]
-					if (k8s.PodIsRunning(pods, podName)) {
+					if k8s.PodIsRunning(pods, podName) {
 						if podName != thisPodName {
 							log.Info("Pod %s podName has already claimed host %s", podName, hostName)
 							filteredHostEntries = removeHostEntry(filteredHostEntries, hostName)
@@ -251,7 +246,7 @@ func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client,
 			log.Info("After filtering out hosts owned by other pods we have %v host entries left", count)
 
 			pickedEntry := filteredHostEntries[random(0, count)]
-			hostName := pickedEntry.Name;
+			hostName := pickedEntry.Name
 			if len(pickedEntry.Host) == 0 {
 				return nil, nil, fmt.Errorf("Could not find host name for entry %s", pickedEntry.Name)
 			}
@@ -260,7 +255,7 @@ func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client,
 			}
 
 			// lets try pick this pod
-			annotations[AnsibleHostPodAnnotationPrefix + hostName] = thisPodName
+			annotations[AnsibleHostPodAnnotationPrefix+hostName] = thisPodName
 
 			rc, err = c.ReplicationControllers(ns).Update(rc)
 			if err != nil {
@@ -454,7 +449,7 @@ func UpdateKansibleRC(hostEntries []*HostEntry, hosts string, f *cmdutil.Factory
 		rc = &api.ReplicationController{
 			ObjectMeta: api.ObjectMeta{
 				Namespace: ns,
-				Name: rcName,
+				Name:      rcName,
 			},
 		}
 	}
@@ -549,7 +544,6 @@ func applyOtherKubernetesResources(f *cmdutil.Factory, c *client.Client, ns stri
 	return nil
 }
 
-
 func applyOtherKubernetesResource(f *cmdutil.Factory, c *client.Client, ns string, file string, variables map[string]string) error {
 	log.Info("applying kubernetes resource: %s", file)
 	data, err := LoadFileAndReplaceVariables(file, variables)
@@ -558,7 +552,6 @@ func applyOtherKubernetesResource(f *cmdutil.Factory, c *client.Client, ns strin
 	}
 	// TODO the following should work ideally but something's wrong with the loading of versioned schemas...
 	//return k8s.ApplyResource(f, c, ns, data, file)
-
 
 	// lets use the `oc` binary instead
 	isOc := true
@@ -593,7 +586,6 @@ func applyOtherKubernetesResource(f *cmdutil.Factory, c *client.Client, ns strin
 	}
 	return nil
 }
-
 
 func ensureSCCExists(ns string, serviceAccountName string) error {
 	binary, err := exec.LookPath("oc")
@@ -649,7 +641,6 @@ users:
 	return err
 }
 
-
 func getCommandOutputString(binary string, args []string, reader io.Reader) (string, error) {
 	cmd := exec.Command(binary, args...)
 	cmd.Stdin = reader
@@ -672,7 +663,7 @@ func getCommandOutputString(binary string, args []string, reader io.Reader) (str
 	if err != nil {
 		return "", err
 	}
-    return out.String(), err
+	return out.String(), err
 }
 
 func runCommand(binary string, args []string, reader io.Reader) error {
@@ -700,7 +691,7 @@ func runCommand(binary string, args []string, reader io.Reader) error {
 	if err != nil {
 		return err
 	}
-    return err
+	return err
 }
 
 func generatePrivateKeySecrets(c *client.Client, ns string, hostEntries []*HostEntry, rc *api.ReplicationController, podSpec *api.PodSpec, container *api.Container) error {
@@ -721,7 +712,7 @@ func generatePrivateKeySecrets(c *client.Client, ns string, hostEntries []*HostE
 				keyName := "sshkey"
 				secret := &api.Secret{
 					ObjectMeta: api.ObjectMeta{
-						Name: secretName,
+						Name:   secretName,
 						Labels: rc.ObjectMeta.Labels,
 					},
 					Data: map[string][]byte{
@@ -730,7 +721,7 @@ func generatePrivateKeySecrets(c *client.Client, ns string, hostEntries []*HostE
 				}
 
 				// lets create or update the secret
-				secretClient := c.Secrets(ns);
+				secretClient := c.Secrets(ns)
 				current, err := secretClient.Get(secretName)
 				if err != nil || current == nil {
 					_, err = secretClient.Create(secret)
@@ -775,12 +766,11 @@ func findGitURL() (string, error) {
 	return "", nil
 }
 
-
 func removeHostEntry(hostEntries []*HostEntry, name string) []*HostEntry {
 	for i, entry := range hostEntries {
 		if entry.Name == name {
-			if i < len(hostEntries) - 1 {
-				return append(hostEntries[:i], hostEntries[i + 1:]...)
+			if i < len(hostEntries)-1 {
+				return append(hostEntries[:i], hostEntries[i+1:]...)
 			}
 			return hostEntries[:i]
 		}
@@ -799,12 +789,11 @@ func GetHostEntryByName(hostEntries []*HostEntry, name string) *HostEntry {
 	return nil
 }
 
-
 func deletePodsForOldHosts(c *client.Client, ns string, annotations map[string]string, pods *api.PodList, hostEntries []*HostEntry) {
 	for annKey, podName := range annotations {
 		if strings.HasPrefix(annKey, AnsibleHostPodAnnotationPrefix) {
 			hostName := annKey[len(AnsibleHostPodAnnotationPrefix):]
-			if (k8s.PodIsRunning(pods, podName)) {
+			if k8s.PodIsRunning(pods, podName) {
 				hostEntry := GetHostEntryByName(hostEntries, hostName)
 				if hostEntry == nil {
 					log.Info("Deleting pod %s as there is no longer an Ansible inventory host called %s", podName, hostName)
@@ -815,10 +804,9 @@ func deletePodsForOldHosts(c *client.Client, ns string, annotations map[string]s
 	}
 }
 
-
 func random(min, max int) int {
 	rand.Seed(time.Now().Unix())
-	return rand.Intn(max - min) + min
+	return rand.Intn(max-min) + min
 }
 
 // HostEntriesToString generates the Ansible inventory text for the host entries
@@ -884,7 +872,6 @@ func (hostEntry HostEntry) write(buffer *bytes.Buffer) {
 	}
 }
 
-
 func parseHostEntry(text string) *HostEntry {
 	values := strings.Split(text, " ")
 	name := ""
@@ -897,14 +884,14 @@ func parseHostEntry(text string) *HostEntry {
 	runCommand := ""
 	count := len(values)
 	if count > 0 {
-		name = values[0];
+		name = values[0]
 
 		// lets parse the key value expressions for the host name
 		for _, exp := range values[1:] {
 			params := strings.Split(exp, "=")
 			if len(params) == 2 {
 				paramValue := params[1]
-				switch (params[0]) {
+				switch params[0] {
 				case AnsibleVariableHost:
 					host = paramValue
 				case AnsibleVariableUser:
@@ -929,14 +916,13 @@ func parseHostEntry(text string) *HostEntry {
 		}
 	}
 	return &HostEntry{
-		Name: name,
-		Host: host,
-		Port: port,
-		User: user,
+		Name:       name,
+		Host:       host,
+		Port:       port,
+		User:       user,
 		PrivateKey: privateKey,
 		Connection: connection,
-		Password: password,
+		Password:   password,
 		RunCommand: runCommand,
 	}
 }
-

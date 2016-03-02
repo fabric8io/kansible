@@ -8,8 +8,8 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
-	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/kubectl"
+	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/kubectl/resource"
 	"k8s.io/kubernetes/pkg/util/strategicpatch"
 
@@ -17,7 +17,6 @@ import (
 
 	"github.com/fabric8io/kansible/log"
 )
-
 
 // GetThisPodName returns this pod name via the `HOSTNAME` environment variable
 func GetThisPodName() (string, error) {
@@ -34,6 +33,7 @@ func GetThisPodName() (string, error) {
 	}
 	return thisPodName, nil
 }
+
 // ReadReplicationControllerFromFile reads the ReplicationController object from the given file name
 func ReadReplicationControllerFromFile(filename string) (*api.ReplicationController, error) {
 	data, err := ReadBytesFromFile(filename)
@@ -65,7 +65,6 @@ func ReadBytesFromFile(filename string) ([]byte, error) {
 	return data, nil
 }
 
-
 // PodIsRunning returns true if the given pod is running in the given list of all pods
 func PodIsRunning(pods *api.PodList, podName string) bool {
 	for _, pod := range pods.Items {
@@ -83,7 +82,7 @@ func GetFirstContainerOrCreate(rc *api.ReplicationController) *api.Container {
 	if len(podSpec.Containers) == 0 {
 		podSpec.Containers[0] = api.Container{}
 	}
-	return &podSpec.Containers[0];
+	return &podSpec.Containers[0]
 }
 
 // GetOrCreatePodSpec returns the PodSpec for this ReplicationController
@@ -130,7 +129,7 @@ func EnsureContainerHasEnvVar(container *api.Container, name string, value strin
 		}
 	}
 	container.Env = append(container.Env, api.EnvVar{
-		Name: name,
+		Name:  name,
 		Value: value,
 	})
 	return false
@@ -153,12 +152,11 @@ func EnsureContainerHasEnvVarFromField(container *api.Container, name string, fi
 		}
 	}
 	container.Env = append(container.Env, api.EnvVar{
-		Name: name,
+		Name:      name,
 		ValueFrom: from,
 	})
 	return false
 }
-
 
 // EnsureContainerHasPreStopCommand ensures that the given container has a `preStop` lifecycle hook
 // to invoke the given commands
@@ -186,12 +184,11 @@ func EnsureContainerHasVolumeMount(container *api.Container, name string, mountP
 		}
 	}
 	container.VolumeMounts = append(container.VolumeMounts, api.VolumeMount{
-		Name: name,
+		Name:      name,
 		MountPath: mountPath,
 	})
 	return false
 }
-
 
 // EnsurePodSpecHasGitVolume ensures that there is a volume with the given name and git repo and revision
 func EnsurePodSpecHasGitVolume(podSpec *api.PodSpec, name string, gitRepo string, gitRevision string) bool {
@@ -199,7 +196,7 @@ func EnsurePodSpecHasGitVolume(podSpec *api.PodSpec, name string, gitRepo string
 		if vm.Name == name {
 			vm.GitRepo = &api.GitRepoVolumeSource{
 				Repository: gitRepo,
-				Revision: gitRevision,
+				Revision:   gitRevision,
 			}
 			return true
 		}
@@ -209,13 +206,12 @@ func EnsurePodSpecHasGitVolume(podSpec *api.PodSpec, name string, gitRepo string
 		VolumeSource: api.VolumeSource{
 			GitRepo: &api.GitRepoVolumeSource{
 				Repository: gitRepo,
-				Revision: gitRevision,
+				Revision:   gitRevision,
 			},
 		},
 	})
 	return false
 }
-
 
 // EnsurePodSpecHasSecretVolume ensures that there is a volume with the given name and secret
 func EnsurePodSpecHasSecretVolume(podSpec *api.PodSpec, name string, secretName string) bool {
@@ -237,8 +233,6 @@ func EnsurePodSpecHasSecretVolume(podSpec *api.PodSpec, name string, secretName 
 	})
 	return false
 }
-
-
 
 // EnsureServiceAccountExists ensures that there is a service account created for the given name
 func EnsureServiceAccountExists(c *client.Client, ns string, serviceAccountName string) (bool, error) {
@@ -273,12 +267,12 @@ func ApplyResource(f *cmdutil.Factory, c *client.Client, ns string, data []byte,
 
 	mapper, typer := f.Object()
 	r := resource.NewBuilder(mapper, typer, f.ClientMapperForCommand()).
-	Schema(schema).
-	ContinueOnError().
-	NamespaceParam(ns).DefaultNamespace().
-	Stream(bytes.NewReader(data), name).
-	Flatten().
-	Do()
+		Schema(schema).
+		ContinueOnError().
+		NamespaceParam(ns).DefaultNamespace().
+		Stream(bytes.NewReader(data), name).
+		Flatten().
+		Do()
 	err = r.Err()
 	if err != nil {
 		log.Info("Failed to load mapper!")

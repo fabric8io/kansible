@@ -37,4 +37,3 @@ func osExpandAndVerifyGlobal(c *cli.Context, name string) (string, error) {
 func fail(err error) {
 	log.Die("Failed: %s", err)
 }
-

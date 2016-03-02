@@ -1,19 +1,18 @@
 package winrm
 
-import(
+import (
 	"fmt"
 	"io"
 	"os"
 	"strconv"
+	"strings"
+
+	"github.com/masterzen/winrm/winrm"
+	"k8s.io/kubernetes/pkg/api"
+	client "k8s.io/kubernetes/pkg/client/unversioned"
 
 	"github.com/fabric8io/kansible/ansible"
 	"github.com/fabric8io/kansible/log"
-
-	"github.com/masterzen/winrm/winrm"
-
-	"k8s.io/kubernetes/pkg/api"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
-	"strings"
 )
 
 // RemoteWinRmCommand runs the remote command on a windows machine
@@ -34,7 +33,7 @@ func RemoteWinRmCommand(user string, password string, host string, port string, 
 		isBash = true
 	}
 	if rc.ObjectMeta.Annotations != nil && !isBash {
-		oldShellID := rc.ObjectMeta.Annotations[ansible.WinRMShellAnnotationPrefix + hostName];
+		oldShellID := rc.ObjectMeta.Annotations[ansible.WinRMShellAnnotationPrefix+hostName]
 		if len(oldShellID) > 0 {
 			// lets close the previously running shell on this machine
 			log.Info("Closing the old WinRM Shell %s", oldShellID)
@@ -48,14 +47,14 @@ func RemoteWinRmCommand(user string, password string, host string, port string, 
 
 	shell, err := client.CreateShell()
 	if err != nil {
-	  return fmt.Errorf("Impossible to create WinRM shell: %s", err)
+		return fmt.Errorf("Impossible to create WinRM shell: %s", err)
 	}
 	defer shell.Close()
 	shellID := shell.ShellId
 	log.Info("Created WinRM Shell %s", shellID)
 
 	if rc != nil && c != nil && !isBash {
-		rc.ObjectMeta.Annotations[ansible.WinRMShellAnnotationPrefix + hostName] = shellID
+		rc.ObjectMeta.Annotations[ansible.WinRMShellAnnotationPrefix+hostName] = shellID
 		_, err = c.ReplicationControllers(rc.ObjectMeta.Namespace).UpdateStatus(rc)
 		if err != nil {
 			return err

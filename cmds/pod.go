@@ -136,6 +136,6 @@ func generateBashScript(file string, connection string) error {
 echo "opening shell on remote machine..."
 export ` + ansible.EnvIsBashShell + `=true
 export ` + ansible.EnvPortForward + `=false
-kansible pod appservers ` + shellCommand + "\n";
+kansible pod appservers ` + shellCommand + "\n"
 	return ioutil.WriteFile(file, []byte(text), 0555)
 }
