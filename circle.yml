@@ -6,9 +6,9 @@ dependencies:
   pre:
     - echo $PATH
     - wget "https://github.com/Masterminds/glide/releases/download/0.8.2/glide-0.8.2-linux-amd64.tar.gz"
-    - mkdir /home/ubuntu/.go_workspace/bin
+    - mkdir /home/ubuntu/.go_workspace/bin || true
     - tar -vxz -C /home/ubuntu/.go_workspace/bin --strip=1 -f glide-0.8.2-linux-amd64.tar.gz
-    - mkdir -p "/home/ubuntu/.go_workspace/src/$IMPORT_PATH"
+    - mkdir -p "/home/ubuntu/.go_workspace/src/$IMPORT_PATH" || true
     - rsync -azC --delete ./ "/home/ubuntu/.go_workspace/src/$IMPORT_PATH/"
   override:
     - rm -rf vendor
@@ -17,7 +17,8 @@ dependencies:
 
 test:
   override:
-    - make test lint
+    - make test lint:
+        pwd: "../.go_workspace/src/$IMPORT_PATH/"
 
 # Disabled for now to avoid conflicts with the Jenkins builds:
 
