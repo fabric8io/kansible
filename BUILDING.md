@@ -69,3 +69,9 @@ If you wish to kill a java process from its PID you can type:
     taskkill /PID 4308 /F
 
 Enjoy!    
+
+## Releasing
+
+Just run `make release`. This will cross-compile for all supported platforms, create tag & upload tarballs (zip file for Windows) to Github releases for download.
+
+Updating the version is done via `make bump` to bump minor version & `make bump-patch` to bump patch version. This is necessary as tags are created from the version specified when releasing.

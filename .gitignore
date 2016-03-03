@@ -5,3 +5,4 @@ _dist/
 .idea
 glide.lock
 golib
+release
