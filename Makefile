@@ -41,7 +41,7 @@ bootstrap:
 build-all:
 	gox -verbose \
 	$(BUILDFLAGS) \
-	-os="linux darwin windows" \
+	-os="linux darwin freebsd netbsd openbsd solaris windows" \
 	-arch="amd64 386" \
 	-output="$(DIST_DIR)/{{.OS}}-{{.Arch}}/{{.Dir}}" .
 
@@ -79,7 +79,7 @@ docker-scratch:
 
 release: build-all
 	rm -rf build release && mkdir build release
-	for os in linux darwin ; do \
+	for os in linux darwin freebsd netbsd openbsd solaris ; do \
 		for arch in amd64 386 ; do \
 			tar --transform "s|^$(DIST_DIR)/$$os-$$arch/||" -czf release/$(NAME)-$(VERSION)-$$os-$$arch.tar.gz $(DIST_DIR)/$$os-$$arch/$(NAME) README.md LICENSE ; \
 		done ; \
