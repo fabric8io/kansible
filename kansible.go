@@ -7,14 +7,8 @@ import (
 
 	"github.com/fabric8io/kansible/cmds"
 	"github.com/fabric8io/kansible/log"
+	"github.com/fabric8io/kansible/version"
 )
-
-// version is the version of the app.
-//
-// This value is overwritten by the linker during build. The default version
-// here is SemVer 2, but basically indicates that this was a one-off build
-// and should not be trusted.
-var version = "0.1.0-unstable"
 
 func main() {
 	app := cli.NewApp()
@@ -28,7 +22,7 @@ a Kubernetes Replication Controller to run, scale and manage the processes provi
 of all your containers and processes along with common scaling, high availability, service discovery and load balancing.
 
 More help is here: https://github.com/fabric8io/kansible/blob/master/README.md`
-	app.Version = version
+	app.Version = version.Version
 	app.EnableBashCompletion = true
 	app.After = func(c *cli.Context) error {
 		if log.ErrorState {
@@ -57,6 +51,12 @@ More help is here: https://github.com/fabric8io/kansible/blob/master/README.md`
 	}
 
 	app.Commands = []cli.Command{
+		{
+			Name:        "version",
+			Usage:       "Outputs the version & exits",
+			Description: `This commmand will output the version & exit.`,
+			Action:      cmds.Version,
+		},
 		{
 			Name:        "rc",
 			Usage:       "Creates or updates the kansible ReplicationController for some hosts in an Ansible inventory.",
