@@ -70,7 +70,7 @@ test:
 
 lint:
 	@echo "Linting does not currently fail the build but is likely to do so in future - fix stuff you see, when you see it please"
-	@export TMP=$(shell mktemp -d) && cp -r vendor $${TMP}/src && GOPATH=$${TMP}:$${GOPATH} GO15VENDOREXPERIMENT=1 gometalinter --vendor --deadline=60s $(LINTERS) ./... || true
+	@export TMP=$(shell mktemp -d) && cp -r vendor $${TMP}/src && GOPATH=$${TMP}:$${GOPATH} GO15VENDOREXPERIMENT=1 gometalinter --vendor --deadline=60s $(LINTERS) ./... || rm -rf $${TMP}} || true
 
 docker-scratch:
 	gox -verbose $(BUILDFLAGS) -os="linux" -arch="amd64" \
