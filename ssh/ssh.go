@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"os"
 
 	"github.com/fabric8io/kansible/log"
@@ -17,7 +18,7 @@ func RemoteSSHCommand(user string, privateKey string, host string, port string, 
 	}
 	log.Info("Connecting to host over SSH on host %s and port %d with user %s with command `%s`", host, port, user, cmd)
 
-	hostPort := host + ":" + port
+	hostPort := net.JoinHostPort(host, port)
 
 	sshConfig := &ssh.ClientConfig{
 		User: user,
