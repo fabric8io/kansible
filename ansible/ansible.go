@@ -175,7 +175,7 @@ func LoadHostEntriesFromText(text string) ([]*HostEntry, error) {
 
 // ChooseHostAndPrivateKey parses the given Ansible inventory file for the hosts
 // and chooses a single host inside it, returning the host name and the private key
-func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client, ns string, rcName string, envVars map[string]string) (*HostEntry, *api.ReplicationController, error) {
+func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client, ns string, rcName string) (*HostEntry, *api.ReplicationController, map[string]string, error) {
 	retryAttempts := 20
 
 	for i := 0; i < retryAttempts; i++ {
@@ -184,19 +184,19 @@ func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client,
 			time.Sleep(time.Duration(random(1000, 20000)) * time.Millisecond)
 		}
 		if c == nil {
-			return nil, nil, fmt.Errorf("No Kubernetes Client specified!")
+			return nil, nil, nil, fmt.Errorf("No Kubernetes Client specified!")
 		}
 		rc, err := c.ReplicationControllers(ns).Get(rcName)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if rc == nil {
-			return nil, nil, fmt.Errorf("No ReplicationController found for name %s", rcName)
+			return nil, nil, nil, fmt.Errorf("No ReplicationController found for name %s", rcName)
 		}
 
 		pods, err := c.Pods(ns).List(nil, nil)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		metadata := &rc.ObjectMeta
@@ -209,11 +209,11 @@ func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client,
 
 		hostsText := annotations[HostInventoryAnnotation]
 		if len(hostsText) == 0 {
-			return nil, nil, fmt.Errorf("Could not find annotation %s on ReplicationController %s", HostInventoryAnnotation, rcName)
+			return nil, nil, nil, fmt.Errorf("Could not find annotation %s on ReplicationController %s", HostInventoryAnnotation, rcName)
 		}
 		hostEntries, err := LoadHostEntriesFromText(hostsText)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		log.Info("Found %d host entries", len(hostEntries))
 
@@ -240,17 +240,17 @@ func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client,
 
 			if count == 0 {
 				log.Info("There are no more hosts available to be supervised by this pod!")
-				return nil, nil, fmt.Errorf("No more hosts available to be supervised!")
+				return nil, nil, nil, fmt.Errorf("No more hosts available to be supervised!")
 			}
 			log.Info("After filtering out hosts owned by other pods we have %v host entries left", count)
 
 			pickedEntry := filteredHostEntries[random(0, count)]
 			hostName := pickedEntry.Name
 			if len(pickedEntry.Host) == 0 {
-				return nil, nil, fmt.Errorf("Could not find host name for entry %s", pickedEntry.Name)
+				return nil, nil, nil, fmt.Errorf("Could not find host name for entry %s", pickedEntry.Name)
 			}
 			if len(pickedEntry.User) == 0 {
-				return nil, nil, fmt.Errorf("Could not find User for entry %s", pickedEntry.Name)
+				return nil, nil, nil, fmt.Errorf("Could not find User for entry %s", pickedEntry.Name)
 			}
 
 			// lets try pick this pod
@@ -266,7 +266,7 @@ func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client,
 				podClient := c.Pods(ns)
 				pod, err := podClient.Get(thisPodName)
 				if err != nil {
-					return pickedEntry, nil, err
+					return pickedEntry, nil, nil, err
 				}
 				metadata := &pod.ObjectMeta
 				if metadata.Annotations == nil {
@@ -277,11 +277,12 @@ func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client,
 				//pod.Status = api.PodStatus{}
 				pod, err = podClient.UpdateStatus(pod)
 				if err != nil {
-					return pickedEntry, nil, err
+					return pickedEntry, nil, nil, err
 				}
 
 				// lets export required environment variables
 				exportEnvVars := os.Getenv(EnvExportEnvVars)
+				envVars := make(map[string]string)
 				if len(exportEnvVars) > 0 {
 					names := strings.Split(exportEnvVars, " ")
 					for _, name := range names {
@@ -297,11 +298,11 @@ func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client,
 				}
 
 				err = forwardPorts(pod, pickedEntry)
-				return pickedEntry, rc, err
+				return pickedEntry, rc, envVars, err
 			}
 		}
 	}
-	return nil, nil, fmt.Errorf("Could not find any available hosts on the ReplicationController %s and hosts %s", rcName, hosts)
+	return nil, nil, nil, fmt.Errorf("Could not find any available hosts on the ReplicationController %s and hosts %s", rcName, hosts)
 }
 
 // forwardPorts forwards any ports that are defined in the PodSpec to the host
@@ -464,15 +465,8 @@ func UpdateKansibleRC(hostEntries []*HostEntry, hosts string, f *cmdutil.Factory
 	metadata := &rc.ObjectMeta
 	resourceVersion := metadata.ResourceVersion
 	rcSpec := &rc.Spec
-	hostCount := len(hostEntries)
 	if replicas < 0 {
 		replicas = originalReplicas
-		if !isUpdate && replicas == 0 {
-			replicas = hostCount
-		}
-	}
-	if replicas > hostCount {
-		replicas = hostCount
 	}
 	rcSpec.Replicas = replicas
 
