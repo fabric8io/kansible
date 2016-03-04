@@ -36,7 +36,9 @@ build: $(MAIN_GO)
 bootstrap:
 	$(GO) get -u github.com/golang/lint/golint github.com/mitchellh/gox github.com/alecthomas/gometalinter github.com/fabric8io/gobump
 	gometalinter --install --update
-	GO15VENDOREXPERIMENT=1 glide up
+
+update-vendor:
+	GO15VENDOREXPERIMENT=1 glide up --update-vendored
 
 build-all:
 	gox -verbose \
@@ -110,4 +112,5 @@ bump-patch:
 				test-charts \
 				lint \
 				bump \
-				bump-patch
+				bump-patch \
+				update-vendor

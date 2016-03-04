@@ -1,21 +1,21 @@
 package: github.com/fabric8io/gosupervise
 import:
-- package: github.com/codegangsta/cli
-  version: f445c894402839580d30de47551cedc152dad814
 - package: github.com/deis/pkg
   subpackages:
-  - /prettyprint
+  - prettyprint
 - package: github.com/Masterminds/vcs
 - package: github.com/Masterminds/semver
 - package: k8s.io/kubernetes
   version: v1.1.1
   subpackages:
-  - /pkg/client
-  - /pkg/cmdutil
+  - pkg/client
+  - pkg/cmdutil
 - package: gopkg.in/yaml.v2
 - package: github.com/nu7hatch/gouuid
 - package: github.com/masterzen/xmlpath
   version: 13f4951698adc0fa9c1dda3e275d489a24201161
-- package: github.com/masterzen/simplexml/dom
+- package: github.com/masterzen/simplexml
+  subpackages:
+  - dom
 - package: github.com/masterzen/winrm
   version: 71c963ed3718881facabea7cf61bc7b13911902e

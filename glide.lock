@@ -1,0 +1,199 @@
+hash: 11d122f185c10ad76b02f422385b5af6bcc6f27a90ef0a082aab9f435ed635ee
+updated: 2016-03-04T09:57:35.234201229Z
+imports:
+- name: bitbucket.org/ww/goautoneg
+  version: 75cd24fc2f2c
+- name: github.com/beorn7/perks
+  version: ""
+  subpackages:
+  - quantile
+- name: github.com/cpuguy83/go-md2man
+  version: ""
+  subpackages:
+  - md2man
+- name: github.com/davecgh/go-spew
+  version: ""
+  subpackages:
+  - spew
+- name: github.com/deis/pkg
+  version: e058b165a2a38c624766f2e6062c1b6d29730840
+  subpackages:
+  - prettyprint
+- name: github.com/docker/docker
+  version: ""
+  subpackages:
+  - pkg/jsonmessage
+  - pkg/mount
+  - pkg/parsers
+  - pkg/symlink
+  - pkg/term
+  - pkg/timeutils
+  - pkg/units
+- name: github.com/docker/libcontainer
+  version: ""
+  subpackages:
+  - cgroups/fs
+  - configs
+  - cgroups
+  - system
+- name: github.com/emicklei/go-restful
+  version: ""
+  subpackages:
+  - swagger
+  - log
+- name: github.com/evanphx/json-patch
+  version: ""
+- name: github.com/ghodss/yaml
+  version: e058b165a2a38c624766f2e6062c1b6d29730840
+- name: github.com/golang/glog
+  version: ""
+- name: github.com/golang/protobuf
+  version: ""
+  subpackages:
+  - proto
+- name: github.com/google/cadvisor
+  version: ""
+  subpackages:
+  - api
+  - cache/memory
+  - collector
+  - container
+  - events
+  - fs
+  - healthz
+  - http
+  - info/v1
+  - info/v2
+  - manager
+  - metrics
+  - pages
+  - storage
+  - summary
+  - utils
+  - validate
+  - version
+- name: github.com/google/gofuzz
+  version: ""
+- name: github.com/imdario/mergo
+  version: ""
+- name: github.com/inconshreveable/mousetrap
+  version: ""
+- name: github.com/juju/ratelimit
+  version: ""
+- name: github.com/Masterminds/semver
+  version: e058b165a2a38c624766f2e6062c1b6d29730840
+- name: github.com/Masterminds/vcs
+  version: e058b165a2a38c624766f2e6062c1b6d29730840
+- name: github.com/masterzen/simplexml
+  version: e058b165a2a38c624766f2e6062c1b6d29730840
+  subpackages:
+  - dom
+- name: github.com/masterzen/winrm
+  version: ""
+  subpackages:
+  - winrm
+  - soap
+- name: github.com/masterzen/xmlpath
+  version: ""
+- name: github.com/matttproud/golang_protobuf_extensions
+  version: ""
+  subpackages:
+  - pbutil
+- name: github.com/nu7hatch/gouuid
+  version: e058b165a2a38c624766f2e6062c1b6d29730840
+- name: github.com/pborman/uuid
+  version: ""
+- name: github.com/prometheus/client_golang
+  version: ""
+  subpackages:
+  - prometheus
+- name: github.com/prometheus/client_model
+  version: ""
+  subpackages:
+  - go
+- name: github.com/prometheus/common
+  version: ""
+  subpackages:
+  - expfmt
+  - model
+- name: github.com/prometheus/procfs
+  version: ""
+- name: github.com/russross/blackfriday
+  version: ""
+- name: github.com/shurcooL/sanitized_anchor_name
+  version: ""
+- name: github.com/spf13/cobra
+  version: ""
+- name: github.com/spf13/pflag
+  version: ""
+- name: golang.org/x/crypto
+  version: e058b165a2a38c624766f2e6062c1b6d29730840
+  subpackages:
+  - ssh
+- name: golang.org/x/net
+  version: ""
+  subpackages:
+  - context
+  - html
+  - websocket
+- name: gopkg.in/yaml.v2
+  version: e058b165a2a38c624766f2e6062c1b6d29730840
+- name: k8s.io/kubernetes
+  version: ""
+  subpackages:
+  - pkg/client
+  - pkg/cmdutil
+  - pkg/api
+  - pkg/client/unversioned
+  - pkg/kubectl/cmd/util
+  - pkg/kubectl
+  - pkg/kubectl/resource
+  - pkg/util/strategicpatch
+  - pkg/api/meta
+  - pkg/api/resource
+  - pkg/api/unversioned
+  - pkg/auth/user
+  - pkg/conversion
+  - pkg/fields
+  - pkg/labels
+  - pkg/runtime
+  - pkg/types
+  - pkg/util
+  - pkg/util/rand
+  - pkg/util/sets
+  - pkg/api/errors
+  - pkg/api/install
+  - pkg/api/latest
+  - pkg/apis/extensions
+  - pkg/apis/extensions/install
+  - pkg/client/metrics
+  - pkg/conversion/queryparams
+  - pkg/util/wait
+  - pkg/version
+  - pkg/watch
+  - pkg/watch/json
+  - pkg/api/registered
+  - pkg/api/validation
+  - pkg/client/unversioned/clientcmd
+  - pkg/util/errors
+  - pkg/api/v1
+  - pkg/fieldpath
+  - pkg/kubelet/qos/util
+  - pkg/util/deployment
+  - pkg/util/jsonpath
+  - pkg/util/validation
+  - pkg/util/yaml
+  - third_party/forked/json
+  - third_party/forked/reflect
+  - pkg/util/fielderrors
+  - pkg/api/util
+  - pkg/apis/extensions/v1beta1
+  - pkg/capabilities
+  - pkg/client/unversioned/auth
+  - pkg/client/unversioned/clientcmd/api
+  - pkg/client/unversioned/clientcmd/api/latest
+  - third_party/golang/template
+  - pkg/client/unversioned/clientcmd/api/v1
+- name: speter.net/go/exp/math/dec/inf
+  version: ""
+devImports: []
