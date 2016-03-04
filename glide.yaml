@@ -1,8 +1,5 @@
 package: github.com/fabric8io/gosupervise
 import:
-- package: github.com/deis/pkg
-  subpackages:
-  - prettyprint
 - package: github.com/Masterminds/vcs
 - package: github.com/Masterminds/semver
 - package: k8s.io/kubernetes
@@ -19,3 +16,4 @@ import:
   - dom
 - package: github.com/masterzen/winrm
   version: 71c963ed3718881facabea7cf61bc7b13911902e
+- package: github.com/fatih/color
