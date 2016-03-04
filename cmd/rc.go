@@ -3,11 +3,11 @@ package cmd
 import (
 	"os"
 
-	"github.com/spf13/cobra"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 
 	"github.com/fabric8io/kansible/ansible"
 	"github.com/fabric8io/kansible/log"
+	"github.com/spf13/cobra"
 )
 
 const (
@@ -38,7 +38,7 @@ var rcCmd = &cobra.Command{
 		}
 		hosts := args[0]
 
-		f := cmdutil.NewFactory(nil)
+		f := cmdutil.NewFactory(clientConfig)
 		if f == nil {
 			log.Die("Failed to create Kubernetes client factory!")
 		}
