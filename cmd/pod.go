@@ -47,7 +47,7 @@ var podCmd = &cobra.Command{
 			command = os.ExpandEnv(strings.Join(args[1:], " "))
 		}
 
-		f := cmdutil.NewFactory(nil)
+		f := cmdutil.NewFactory(clientConfig)
 		if f == nil {
 			log.Die("Failed to create Kubernetes client factory!")
 		}

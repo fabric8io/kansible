@@ -24,7 +24,7 @@ var killCmd = &cobra.Command{
 	Short: "Kills any pending shells for this pod.",
 	Long:  `This commmand will find the shell thats associated with a pod and kill it.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		f := cmdutil.NewFactory(nil)
+		f := cmdutil.NewFactory(clientConfig)
 		if f == nil {
 			log.Die("Failed to create Kubernetes client factory!")
 		}
