@@ -66,7 +66,7 @@ var rcCmd = &cobra.Command{
 
 		_, err = ansible.UpdateKansibleRC(hostEntries, hosts, f, kubeclient, ns, rcFile, replicas)
 		if err != nil {
-			log.Die("Failed to update Kansible RC: ", err)
+			log.Die("Failed to update Kansible RC: %s", err)
 		}
 	},
 }

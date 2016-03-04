@@ -118,6 +118,7 @@ var podCmd = &cobra.Command{
 			err = generateBashScript(bash, connection)
 			if err != nil {
 				log.Err("Failed to generate bash script at %s due to: %v", bash, err)
+				return
 			}
 		}
 
