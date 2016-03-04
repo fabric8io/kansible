@@ -80,10 +80,12 @@ docker-scratch:
 	docker build -f Dockerfile.scratch -t "fabric8/kansible:scratch" .
 
 release: build-all
-	rm -rf build release && mkdir build release
+	rm -rf release && mkdir release
 	for os in linux darwin freebsd netbsd openbsd solaris ; do \
 		for arch in amd64 386 ; do \
-			tar --transform "s|^$(DIST_DIR)/$$os-$$arch/||" -czf release/$(NAME)-$(VERSION)-$$os-$$arch.tar.gz $(DIST_DIR)/$$os-$$arch/$(NAME) README.md LICENSE ; \
+			if [ -f "$(DIST_DIR)/$$os-$$arch/$(NAME)" ] ; then \
+				tar --transform "s|^$(DIST_DIR)/$$os-$$arch/||" -czf release/$(NAME)-$(VERSION)-$$os-$$arch.tar.gz $(DIST_DIR)/$$os-$$arch/$(NAME) README.md LICENSE ; \
+			fi ; \
 		done ; \
 	done
 	for arch in amd64 386 ; do \
