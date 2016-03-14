@@ -5,12 +5,8 @@
  * type the following:
 
 ```
-cd $GOPATH
-mkdir -p src/github.com/fabric8io/
-cd src/github.com/fabric8io/
-git clone https://github.com/fabric8io/kansible.git
-cd fabric8io
-
+go get github.com/fabric8io/kansible
+cd $GOPATH/src/github.com/fabric8io/kansible
 make bootstrap
 ```
 
