@@ -48,22 +48,22 @@ Note that the delete command does NOT do resource version checks, so if someone
 submits an update to a resource right when you submit a delete, their update
 will be lost along with the rest of the resource.`
 	delete_example = `# Delete a pod using the type and name specified in pod.json.
-$ kubectl delete -f ./pod.json
+kubectl delete -f ./pod.json
 
 # Delete a pod based on the type and name in the JSON passed into stdin.
-$ cat pod.json | kubectl delete -f -
+cat pod.json | kubectl delete -f -
 
 # Delete pods and services with same names "baz" and "foo"
-$ kubectl delete pod,service baz foo
+kubectl delete pod,service baz foo
 
 # Delete pods and services with label name=myLabel.
-$ kubectl delete pods,services -l name=myLabel
+kubectl delete pods,services -l name=myLabel
 
 # Delete a pod with UID 1234-56-7890-234234-456456.
-$ kubectl delete pod 1234-56-7890-234234-456456
+kubectl delete pod 1234-56-7890-234234-456456
 
 # Delete all pods
-$ kubectl delete pods --all`
+kubectl delete pods --all`
 )
 
 func NewCmdDelete(f *cmdutil.Factory, out io.Writer) *cobra.Command {
@@ -71,7 +71,7 @@ func NewCmdDelete(f *cmdutil.Factory, out io.Writer) *cobra.Command {
 
 	// retrieve a list of handled resources from printer as valid args
 	validArgs := []string{}
-	p, err := f.Printer(nil, false, false, false, false, []string{})
+	p, err := f.Printer(nil, false, false, false, false, false, false, []string{})
 	cmdutil.CheckErr(err)
 	if p != nil {
 		validArgs = p.HandledResources()
@@ -108,7 +108,7 @@ func RunDelete(f *cmdutil.Factory, out io.Writer, cmd *cobra.Command, args []str
 	}
 	deleteAll := cmdutil.GetFlagBool(cmd, "all")
 	mapper, typer := f.Object()
-	r := resource.NewBuilder(mapper, typer, f.ClientMapperForCommand()).
+	r := resource.NewBuilder(mapper, typer, resource.ClientMapperFunc(f.ClientForMapping), f.Decoder(true)).
 		ContinueOnError().
 		NamespaceParam(cmdNamespace).DefaultNamespace().
 		FilenameParam(enforceNamespace, options.Filenames...).
@@ -165,7 +165,7 @@ func ReapResult(r *resource.Result, f *cmdutil.Factory, out io.Writer, isDefault
 		if gracePeriod >= 0 {
 			options = api.NewDeleteOptions(int64(gracePeriod))
 		}
-		if _, err := reaper.Stop(info.Namespace, info.Name, timeout, options); err != nil {
+		if err := reaper.Stop(info.Namespace, info.Name, timeout, options); err != nil {
 			return cmdutil.AddSourceToErr("stopping", info.Source, err)
 		}
 		cmdutil.PrintSuccess(mapper, shortOutput, out, info.Mapping.Resource, info.Name, "deleted")

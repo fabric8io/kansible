@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"k8s.io/kubernetes/pkg/api/meta"
+	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/kubectl"
 
 	"github.com/spf13/cobra"
@@ -29,14 +30,15 @@ import (
 
 // AddPrinterFlags adds printing related flags to a command (e.g. output format, no headers, template path)
 func AddPrinterFlags(cmd *cobra.Command) {
-	cmd.Flags().StringP("output", "o", "", "Output format. One of: json|yaml|wide|name|go-template=...|go-template-file=...|jsonpath=...|jsonpath-file=... See golang template [http://golang.org/pkg/text/template/#pkg-overview] and jsonpath template [http://releases.k8s.io/release-1.1/docs/user-guide/jsonpath.md].")
-	cmd.Flags().String("output-version", "", "Output the formatted object with the given version (default api-version).")
+	cmd.Flags().StringP("output", "o", "", "Output format. One of: json|yaml|wide|name|go-template=...|go-template-file=...|jsonpath=...|jsonpath-file=... See golang template [http://golang.org/pkg/text/template/#pkg-overview] and jsonpath template [http://releases.k8s.io/release-1.2/docs/user-guide/jsonpath.md].")
+	cmd.Flags().String("output-version", "", "Output the formatted object with the given group version (for ex: 'extensions/v1beta1').")
 	cmd.Flags().Bool("no-headers", false, "When using the default output, don't print headers.")
+	cmd.Flags().Bool("show-labels", false, "When printing, show all labels as the last column (default hide labels column)")
 	// template shorthand -t is deprecated to support -t for --tty
 	// TODO: remove template flag shorthand -t
 	cmd.Flags().StringP("template", "t", "", "Template string or path to template file to use when -o=go-template, -o=go-template-file. The template format is golang templates [http://golang.org/pkg/text/template/#pkg-overview].")
 	cmd.Flags().MarkShorthandDeprecated("template", "please use --template instead")
-	cmd.Flags().String("sort-by", "", "If non-empty, sort list types using this field specification.  The field specification is expressed as a JSONPath expression (e.g. 'ObjectMeta.Name'). The field in the API resource specified by this JSONPath expression must be an integer or a string.")
+	cmd.Flags().String("sort-by", "", "If non-empty, sort list types using this field specification.  The field specification is expressed as a JSONPath expression (e.g. '{.metadata.name}'). The field in the API resource specified by this JSONPath expression must be an integer or a string.")
 	cmd.Flags().BoolP("show-all", "a", false, "When printing, show all resources (default hide terminated pods.)")
 }
 
@@ -75,12 +77,18 @@ func ValidateOutputArgs(cmd *cobra.Command) error {
 }
 
 // OutputVersion returns the preferred output version for generic content (JSON, YAML, or templates)
-func OutputVersion(cmd *cobra.Command, defaultVersion string) string {
-	outputVersion := GetFlagString(cmd, "output-version")
-	if len(outputVersion) == 0 {
-		outputVersion = defaultVersion
+// defaultVersion is never mutated.  Nil simply allows clean passing in common usage from client.Config
+func OutputVersion(cmd *cobra.Command, defaultVersion *unversioned.GroupVersion) (unversioned.GroupVersion, error) {
+	outputVersionString := GetFlagString(cmd, "output-version")
+	if len(outputVersionString) == 0 {
+		if defaultVersion == nil {
+			return unversioned.GroupVersion{}, nil
+		}
+
+		return *defaultVersion, nil
 	}
-	return outputVersion
+
+	return unversioned.ParseGroupVersion(outputVersionString)
 }
 
 // PrinterForCommand returns the default printer for this command.
@@ -95,7 +103,9 @@ func PrinterForCommand(cmd *cobra.Command) (kubectl.ResourcePrinter, bool, error
 		outputFormat = "template"
 	}
 
-	templateFormat := []string{"go-template=", "go-template-file=", "jsonpath=", "jsonpath-file="}
+	templateFormat := []string{
+		"go-template=", "go-template-file=", "jsonpath=", "jsonpath-file=", "custom-columns=", "custom-columns-file=",
+	}
 	for _, format := range templateFormat {
 		if strings.HasPrefix(outputFormat, format) {
 			templateFile = outputFormat[len(format):]

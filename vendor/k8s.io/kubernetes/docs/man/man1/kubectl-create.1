@@ -29,8 +29,16 @@ JSON and YAML formats are accepted.
     Output mode. Use "\-o name" for shorter output (resource/name).
 
 .PP
-\fB\-\-schema\-cache\-dir\fP="/tmp/kubectl.schema"
-    If non\-empty, load/store cached API schemas in this directory, default is '/tmp/kubectl.schema'
+\fB\-\-record\fP=false
+    Record current kubectl command in the resource annotation.
+
+.PP
+\fB\-\-save\-config\fP=false
+    If true, the configuration of current object will be saved in its annotation. This is useful when you want to perform kubectl apply on this object in the future.
+
+.PP
+\fB\-\-schema\-cache\-dir\fP="\~/.kube/schema"
+    If non\-empty, load/store cached API schemas in this directory, default is '$HOME/.kube/schema'
 
 .PP
 \fB\-\-validate\fP=true
@@ -44,7 +52,7 @@ JSON and YAML formats are accepted.
 
 .PP
 \fB\-\-api\-version\fP=""
-    The API version to use when talking to the server
+    DEPRECATED: The API version to use when talking to the server
 
 .PP
 \fB\-\-certificate\-authority\fP=""
@@ -52,7 +60,7 @@ JSON and YAML formats are accepted.
 
 .PP
 \fB\-\-client\-certificate\fP=""
-    Path to a client key file for TLS.
+    Path to a client certificate file for TLS.
 
 .PP
 \fB\-\-client\-key\fP=""
@@ -137,10 +145,10 @@ JSON and YAML formats are accepted.
 
 .nf
 # Create a pod using the data in pod.json.
-$ kubectl create \-f ./pod.json
+kubectl create \-f ./pod.json
 
 # Create a pod based on the JSON passed into stdin.
-$ cat pod.json | kubectl create \-f \-
+cat pod.json | kubectl create \-f \-
 
 .fi
 .RE
@@ -148,7 +156,7 @@ $ cat pod.json | kubectl create \-f \-
 
 .SH SEE ALSO
 .PP
-\fBkubectl(1)\fP,
+\fBkubectl(1)\fP, \fBkubectl\-create\-namespace(1)\fP, \fBkubectl\-create\-secret(1)\fP, \fBkubectl\-create\-configmap(1)\fP, \fBkubectl\-create\-serviceaccount(1)\fP,
 
 
 .SH HISTORY

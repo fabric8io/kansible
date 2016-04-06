@@ -21,37 +21,46 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"hash/fnv"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	etcd "github.com/coreos/go-etcd/etcd"
 	"github.com/golang/glog"
 	skymsg "github.com/skynetservices/skydns/msg"
+	flag "github.com/spf13/pflag"
 	kapi "k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/endpoints"
+	"k8s.io/kubernetes/pkg/api/unversioned"
 	kcache "k8s.io/kubernetes/pkg/client/cache"
+	"k8s.io/kubernetes/pkg/client/restclient"
 	kclient "k8s.io/kubernetes/pkg/client/unversioned"
 	kclientcmd "k8s.io/kubernetes/pkg/client/unversioned/clientcmd"
 	kframework "k8s.io/kubernetes/pkg/controller/framework"
-	kSelector "k8s.io/kubernetes/pkg/fields"
-	etcdstorage "k8s.io/kubernetes/pkg/storage/etcd"
+	kselector "k8s.io/kubernetes/pkg/fields"
+	etcdutil "k8s.io/kubernetes/pkg/storage/etcd/util"
 	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/util/validation"
 	"k8s.io/kubernetes/pkg/util/wait"
 )
 
+// The name of the "master" Kubernetes Service.
+const kubernetesSvcName = "kubernetes"
+
 var (
-	// TODO: switch to pflag and make - and _ equivalent.
 	argDomain              = flag.String("domain", "cluster.local", "domain under which to create names")
-	argEtcdMutationTimeout = flag.Duration("etcd_mutation_timeout", 10*time.Second, "crash after retrying etcd mutation for a specified duration")
+	argEtcdMutationTimeout = flag.Duration("etcd-mutation-timeout", 10*time.Second, "crash after retrying etcd mutation for a specified duration")
 	argEtcdServer          = flag.String("etcd-server", "http://127.0.0.1:4001", "URL to etcd server")
-	argKubecfgFile         = flag.String("kubecfg_file", "", "Location of kubecfg file for access to kubernetes master service; --kube_master_url overrides the URL part of this; if neither this nor --kube_master_url are provided, defaults to service account tokens")
-	argKubeMasterURL       = flag.String("kube_master_url", "", "URL to reach kubernetes master. Env variables in this flag will be expanded.")
+	argKubecfgFile         = flag.String("kubecfg-file", "", "Location of kubecfg file for access to kubernetes master service; --kube-master-url overrides the URL part of this; if neither this nor --kube-master-url are provided, defaults to service account tokens")
+	argKubeMasterURL       = flag.String("kube-master-url", "", "URL to reach kubernetes master. Env variables in this flag will be expanded.")
+	healthzPort            = flag.Int("healthz-port", 8081, "port on which to serve a kube2sky HTTP readiness probe.")
 )
 
 const (
@@ -85,8 +94,10 @@ type kube2sky struct {
 	etcdMutationTimeout time.Duration
 	// A cache that contains all the endpoints in the system.
 	endpointsStore kcache.Store
-	// A cache that contains all the servicess in the system.
+	// A cache that contains all the services in the system.
 	servicesStore kcache.Store
+	// A cache that contains all the pods in the system.
+	podsStore kcache.Store
 	// Lock for controlling access to headless services.
 	mlock sync.Mutex
 }
@@ -130,7 +141,7 @@ func (ks *kube2sky) newHeadlessService(subdomain string, service *kapi.Service) 
 		return fmt.Errorf("failed to get endpoints object from endpoints store - %v", err)
 	}
 	if !exists {
-		glog.V(1).Infof("could not find endpoints for service %q in namespace %q. DNS records will be created once endpoints show up.", service.Name, service.Namespace)
+		glog.V(1).Infof("Could not find endpoints for service %q in namespace %q. DNS records will be created once endpoints show up.", service.Name, service.Namespace)
 		return nil
 	}
 	if e, ok := e.(*kapi.Endpoints); ok {
@@ -150,14 +161,28 @@ func getSkyMsg(ip string, port int) *skymsg.Service {
 }
 
 func (ks *kube2sky) generateRecordsForHeadlessService(subdomain string, e *kapi.Endpoints, svc *kapi.Service) error {
+	glog.V(4).Infof("Endpoints Annotations: %v", e.Annotations)
 	for idx := range e.Subsets {
 		for subIdx := range e.Subsets[idx].Addresses {
-			b, err := json.Marshal(getSkyMsg(e.Subsets[idx].Addresses[subIdx].IP, 0))
+			endpointIP := e.Subsets[idx].Addresses[subIdx].IP
+			b, err := json.Marshal(getSkyMsg(endpointIP, 0))
 			if err != nil {
 				return err
 			}
 			recordValue := string(b)
 			recordLabel := getHash(recordValue)
+			if serializedPodHostnames := e.Annotations[endpoints.PodHostnamesAnnotation]; len(serializedPodHostnames) > 0 {
+				podHostnames := map[string]endpoints.HostRecord{}
+				err := json.Unmarshal([]byte(serializedPodHostnames), &podHostnames)
+				if err != nil {
+					return err
+				}
+				if hostRecord, exists := podHostnames[string(endpointIP)]; exists {
+					if validation.IsDNS1123Label(hostRecord.HostName) {
+						recordLabel = hostRecord.HostName
+					}
+				}
+			}
 			recordKey := buildDNSNameString(subdomain, recordLabel)
 
 			glog.V(2).Infof("Setting DNS record: %v -> %q\n", recordKey, recordValue)
@@ -335,18 +360,18 @@ func (ks *kube2sky) generateSRVRecord(subdomain, portSegment, recordName, cName 
 }
 
 func (ks *kube2sky) addDNS(subdomain string, service *kapi.Service) error {
-	if len(service.Spec.Ports) == 0 {
-		glog.Fatalf("unexpected service with no ports: %v", service)
-	}
 	// if ClusterIP is not set, a DNS entry should not be created
 	if !kapi.IsServiceIPSet(service) {
 		return ks.newHeadlessService(subdomain, service)
+	}
+	if len(service.Spec.Ports) == 0 {
+		glog.Info("Unexpected service with no ports, this should not have happend: %v", service)
 	}
 	return ks.generateRecordsForPortalService(subdomain, service)
 }
 
 // Implements retry logic for arbitrary mutator. Crashes after retrying for
-// etcd_mutation_timeout.
+// etcd-mutation-timeout.
 func (ks *kube2sky) mutateEtcdOrDie(mutator func() error) {
 	timeout := time.After(ks.etcdMutationTimeout)
 	for {
@@ -379,17 +404,17 @@ func buildDNSNameString(labels ...string) string {
 
 // Returns a cache.ListWatch that gets all changes to services.
 func createServiceLW(kubeClient *kclient.Client) *kcache.ListWatch {
-	return kcache.NewListWatchFromClient(kubeClient, "services", kapi.NamespaceAll, kSelector.Everything())
+	return kcache.NewListWatchFromClient(kubeClient, "services", kapi.NamespaceAll, kselector.Everything())
 }
 
 // Returns a cache.ListWatch that gets all changes to endpoints.
 func createEndpointsLW(kubeClient *kclient.Client) *kcache.ListWatch {
-	return kcache.NewListWatchFromClient(kubeClient, "endpoints", kapi.NamespaceAll, kSelector.Everything())
+	return kcache.NewListWatchFromClient(kubeClient, "endpoints", kapi.NamespaceAll, kselector.Everything())
 }
 
 // Returns a cache.ListWatch that gets all changes to pods.
 func createEndpointsPodLW(kubeClient *kclient.Client) *kcache.ListWatch {
-	return kcache.NewListWatchFromClient(kubeClient, "pods", kapi.NamespaceAll, kSelector.Everything())
+	return kcache.NewListWatchFromClient(kubeClient, "pods", kapi.NamespaceAll, kselector.Everything())
 }
 
 func (ks *kube2sky) newService(obj interface{}) {
@@ -407,7 +432,11 @@ func (ks *kube2sky) removeService(obj interface{}) {
 }
 
 func (ks *kube2sky) updateService(oldObj, newObj interface{}) {
-	// TODO: Avoid unwanted updates.
+	// TODO: We shouldn't leave etcd in a state where it doesn't have a
+	// record for a Service. This removal is needed to completely clean
+	// the directory of a Service, which has SRV records and A records
+	// that are hashed according to oldObj. Unfortunately, this is the
+	// easiest way to purge the directory.
 	ks.removeService(oldObj)
 	ks.newService(newObj)
 }
@@ -418,7 +447,7 @@ func newEtcdClient(etcdServer string) (*etcd.Client, error) {
 		err    error
 	)
 	for attempt := 1; attempt <= maxConnectAttempts; attempt++ {
-		if _, err = etcdstorage.GetEtcdVersion(etcdServer); err == nil {
+		if _, err = etcdutil.GetEtcdVersion(etcdServer); err == nil {
 			break
 		}
 		if attempt == maxConnectAttempts {
@@ -453,10 +482,10 @@ func newEtcdClient(etcdServer string) (*etcd.Client, error) {
 func expandKubeMasterURL() (string, error) {
 	parsedURL, err := url.Parse(os.ExpandEnv(*argKubeMasterURL))
 	if err != nil {
-		return "", fmt.Errorf("failed to parse --kube_master_url %s - %v", *argKubeMasterURL, err)
+		return "", fmt.Errorf("failed to parse --kube-master-url %s - %v", *argKubeMasterURL, err)
 	}
 	if parsedURL.Scheme == "" || parsedURL.Host == "" || parsedURL.Host == ":" {
-		return "", fmt.Errorf("invalid --kube_master_url specified %s", *argKubeMasterURL)
+		return "", fmt.Errorf("invalid --kube-master-url specified %s", *argKubeMasterURL)
 	}
 	return parsedURL.String(), nil
 }
@@ -464,11 +493,11 @@ func expandKubeMasterURL() (string, error) {
 // TODO: evaluate using pkg/client/clientcmd
 func newKubeClient() (*kclient.Client, error) {
 	var (
-		config    *kclient.Config
+		config    *restclient.Config
 		err       error
 		masterURL string
 	)
-	// If the user specified --kube_master_url, expand env vars and verify it.
+	// If the user specified --kube-master-url, expand env vars and verify it.
 	if *argKubeMasterURL != "" {
 		masterURL, err = expandKubeMasterURL()
 		if err != nil {
@@ -477,15 +506,15 @@ func newKubeClient() (*kclient.Client, error) {
 	}
 
 	if masterURL != "" && *argKubecfgFile == "" {
-		// Only --kube_master_url was provided.
-		config = &kclient.Config{
-			Host:    masterURL,
-			Version: "v1",
+		// Only --kube-master-url was provided.
+		config = &restclient.Config{
+			Host:          masterURL,
+			ContentConfig: restclient.ContentConfig{GroupVersion: &unversioned.GroupVersion{Version: "v1"}},
 		}
 	} else {
 		// We either have:
-		//  1) --kube_master_url and --kubecfg_file
-		//  2) just --kubecfg_file
+		//  1) --kube-master-url and --kubecfg-file
+		//  2) just --kubecfg-file
 		//  3) neither flag
 		// In any case, the logic is the same.  If (3), this will automatically
 		// fall back on the service account token.
@@ -498,7 +527,7 @@ func newKubeClient() (*kclient.Client, error) {
 	}
 
 	glog.Infof("Using %s for kubernetes master", config.Host)
-	glog.Infof("Using kubernetes API %s", config.Version)
+	glog.Infof("Using kubernetes API %v", config.GroupVersion)
 	return kclient.New(config)
 }
 
@@ -513,7 +542,7 @@ func watchForServices(kubeClient *kclient.Client, ks *kube2sky) kcache.Store {
 			UpdateFunc: ks.updateService,
 		},
 	)
-	go serviceController.Run(util.NeverStop)
+	go serviceController.Run(wait.NeverStop)
 	return serviceStore
 }
 
@@ -531,7 +560,7 @@ func watchEndpoints(kubeClient *kclient.Client, ks *kube2sky) kcache.Store {
 		},
 	)
 
-	go eController.Run(util.NeverStop)
+	go eController.Run(wait.NeverStop)
 	return eStore
 }
 
@@ -549,7 +578,7 @@ func watchPods(kubeClient *kclient.Client, ks *kube2sky) kcache.Store {
 		},
 	)
 
-	go eController.Run(util.NeverStop)
+	go eController.Run(wait.NeverStop)
 	return eStore
 }
 
@@ -559,9 +588,56 @@ func getHash(text string) string {
 	return fmt.Sprintf("%x", h.Sum32())
 }
 
+// waitForKubernetesService waits for the "Kuberntes" master service.
+// Since the health probe on the kube2sky container is essentially an nslookup
+// of this service, we cannot serve any DNS records if it doesn't show up.
+// Once the Service is found, we start replying on this containers readiness
+// probe endpoint.
+func waitForKubernetesService(client *kclient.Client) (svc *kapi.Service) {
+	name := fmt.Sprintf("%v/%v", kapi.NamespaceDefault, kubernetesSvcName)
+	glog.Infof("Waiting for service: %v", name)
+	var err error
+	servicePollInterval := 1 * time.Second
+	for {
+		svc, err = client.Services(kapi.NamespaceDefault).Get(kubernetesSvcName)
+		if err != nil || svc == nil {
+			glog.Infof("Ignoring error while waiting for service %v: %v. Sleeping %v before retrying.", name, err, servicePollInterval)
+			time.Sleep(servicePollInterval)
+			continue
+		}
+		break
+	}
+	return
+}
+
+// setupSignalHandlers runs a goroutine that waits on SIGINT or SIGTERM and logs it
+// before exiting.
+func setupSignalHandlers() {
+	sigChan := make(chan os.Signal)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	// This program should always exit gracefully logging that it received
+	// either a SIGINT or SIGTERM. Since kube2sky is run in a container
+	// without a liveness probe as part of the kube-dns pod, it shouldn't
+	// restart unless the pod is deleted. If it restarts without logging
+	// anything it means something is seriously wrong.
+	// TODO: Remove once #22290 is fixed.
+	go func() {
+		glog.Fatalf("Received signal %s", <-sigChan)
+	}()
+}
+
+// setupHealthzHandlers sets up a readiness and liveness endpoint for kube2sky.
+func setupHealthzHandlers(ks *kube2sky) {
+	http.HandleFunc("/readiness", func(w http.ResponseWriter, req *http.Request) {
+		fmt.Fprintf(w, "ok\n")
+	})
+}
+
 func main() {
+	flag.CommandLine.SetNormalizeFunc(util.WarnWordSepNormalizeFunc)
 	flag.Parse()
 	var err error
+	setupSignalHandlers()
 	// TODO: Validate input flags.
 	domain := *argDomain
 	if !strings.HasSuffix(domain, ".") {
@@ -579,10 +655,20 @@ func main() {
 	if err != nil {
 		glog.Fatalf("Failed to create a kubernetes client: %v", err)
 	}
+	// Wait synchronously for the Kubernetes service and add a DNS record for it.
+	ks.newService(waitForKubernetesService(kubeClient))
+	glog.Infof("Successfully added DNS record for Kubernetes service.")
 
 	ks.endpointsStore = watchEndpoints(kubeClient, &ks)
 	ks.servicesStore = watchForServices(kubeClient, &ks)
-	ks.servicesStore = watchPods(kubeClient, &ks)
+	ks.podsStore = watchPods(kubeClient, &ks)
 
-	select {}
+	// We declare kube2sky ready when:
+	// 1. It has retrieved the Kubernetes master service from the apiserver. If this
+	//    doesn't happen skydns will fail its liveness probe assuming that it can't
+	//    perform any cluster local DNS lookups.
+	// 2. It has setup the 3 watches above.
+	// Once ready this container never flips to not-ready.
+	setupHealthzHandlers(&ks)
+	glog.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *healthzPort), nil))
 }

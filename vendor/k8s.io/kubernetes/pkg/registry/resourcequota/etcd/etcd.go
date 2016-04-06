@@ -20,11 +20,11 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/fields"
 	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/registry/cachesize"
 	"k8s.io/kubernetes/pkg/registry/generic"
 	etcdgeneric "k8s.io/kubernetes/pkg/registry/generic/etcd"
 	"k8s.io/kubernetes/pkg/registry/resourcequota"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/storage"
 )
 
 type REST struct {
@@ -32,11 +32,16 @@ type REST struct {
 }
 
 // NewREST returns a RESTStorage object that will work against resource quotas.
-func NewREST(s storage.Interface) (*REST, *StatusREST) {
+func NewREST(opts generic.RESTOptions) (*REST, *StatusREST) {
 	prefix := "/resourcequotas"
+
+	newListFunc := func() runtime.Object { return &api.ResourceQuotaList{} }
+	storageInterface := opts.Decorator(
+		opts.Storage, cachesize.GetWatchCacheSizeByResource(cachesize.ResourceQuotas), &api.ResourceQuota{}, prefix, resourcequota.Strategy, newListFunc)
+
 	store := &etcdgeneric.Etcd{
 		NewFunc:     func() runtime.Object { return &api.ResourceQuota{} },
-		NewListFunc: func() runtime.Object { return &api.ResourceQuotaList{} },
+		NewListFunc: newListFunc,
 		KeyRootFunc: func(ctx api.Context) string {
 			return etcdgeneric.NamespaceKeyRootFunc(ctx, prefix)
 		},
@@ -49,13 +54,14 @@ func NewREST(s storage.Interface) (*REST, *StatusREST) {
 		PredicateFunc: func(label labels.Selector, field fields.Selector) generic.Matcher {
 			return resourcequota.MatchResourceQuota(label, field)
 		},
-		EndpointName: "resourcequotas",
+		QualifiedResource:       api.Resource("resourcequotas"),
+		DeleteCollectionWorkers: opts.DeleteCollectionWorkers,
 
 		CreateStrategy:      resourcequota.Strategy,
 		UpdateStrategy:      resourcequota.Strategy,
 		ReturnDeletedObject: true,
 
-		Storage: s,
+		Storage: storageInterface,
 	}
 
 	statusStore := *store

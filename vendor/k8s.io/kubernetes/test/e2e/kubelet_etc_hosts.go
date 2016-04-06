@@ -18,16 +18,17 @@ package e2e
 
 import (
 	"fmt"
+	"strings"
+
 	. "github.com/onsi/ginkgo"
 	api "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/latest"
 	"k8s.io/kubernetes/pkg/api/unversioned"
+	"k8s.io/kubernetes/pkg/apimachinery/registered"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
-	"strings"
 )
 
 const (
-	kubeletEtcHostsImageName          = "gcr.io/google_containers/netexec:1.0"
+	kubeletEtcHostsImageName          = "gcr.io/google_containers/netexec:1.4"
 	kubeletEtcHostsPodName            = "test-pod"
 	kubeletEtcHostsHostNetworkPodName = "test-host-network-pod"
 	etcHostsPartialContent            = "# Kubernetes-managed hosts file."
@@ -40,7 +41,7 @@ type KubeletManagedHostConfig struct {
 }
 
 var _ = Describe("KubeletManagedEtcHosts", func() {
-	f := NewFramework("e2e-kubelet-etc-hosts")
+	f := NewDefaultFramework("e2e-kubelet-etc-hosts")
 	config := &KubeletManagedHostConfig{
 		f: f,
 	}
@@ -143,7 +144,7 @@ func (config *KubeletManagedHostConfig) createPodSpec(podName string) *api.Pod {
 	pod := &api.Pod{
 		TypeMeta: unversioned.TypeMeta{
 			Kind:       "Pod",
-			APIVersion: latest.GroupOrDie("").Version,
+			APIVersion: registered.GroupOrDie(api.GroupName).GroupVersion.String(),
 		},
 		ObjectMeta: api.ObjectMeta{
 			Name:      podName,
@@ -204,14 +205,16 @@ func (config *KubeletManagedHostConfig) createPodSpecWithHostNetwork(podName str
 	pod := &api.Pod{
 		TypeMeta: unversioned.TypeMeta{
 			Kind:       "Pod",
-			APIVersion: latest.GroupOrDie("").Version,
+			APIVersion: registered.GroupOrDie(api.GroupName).GroupVersion.String(),
 		},
 		ObjectMeta: api.ObjectMeta{
 			Name:      podName,
 			Namespace: config.f.Namespace.Name,
 		},
 		Spec: api.PodSpec{
-			HostNetwork: true,
+			SecurityContext: &api.PodSecurityContext{
+				HostNetwork: true,
+			},
 			Containers: []api.Container{
 				{
 					Name:            "busybox-1",

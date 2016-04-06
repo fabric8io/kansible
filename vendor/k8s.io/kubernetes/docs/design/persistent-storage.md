@@ -7,7 +7,7 @@
 
 This document proposes a model for managing persistent, cluster-scoped storage for applications requiring long lived data.
 
-### tl;dr
+### Abstract
 
 Two new API kinds:
 

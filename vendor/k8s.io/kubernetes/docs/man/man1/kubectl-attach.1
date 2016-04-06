@@ -13,13 +13,13 @@ kubectl attach \- Attach to a running container.
 
 .SH DESCRIPTION
 .PP
-Attach to a a process that is already running inside an existing container.
+Attach to a process that is already running inside an existing container.
 
 
 .SH OPTIONS
 .PP
 \fB\-c\fP, \fB\-\-container\fP=""
-    Container name
+    Container name. If omitted, the first container in the pod will be chosen
 
 .PP
 \fB\-i\fP, \fB\-\-stdin\fP=false
@@ -37,7 +37,7 @@ Attach to a a process that is already running inside an existing container.
 
 .PP
 \fB\-\-api\-version\fP=""
-    The API version to use when talking to the server
+    DEPRECATED: The API version to use when talking to the server
 
 .PP
 \fB\-\-certificate\-authority\fP=""
@@ -45,7 +45,7 @@ Attach to a a process that is already running inside an existing container.
 
 .PP
 \fB\-\-client\-certificate\fP=""
-    Path to a client key file for TLS.
+    Path to a client certificate file for TLS.
 
 .PP
 \fB\-\-client\-key\fP=""
@@ -130,14 +130,14 @@ Attach to a a process that is already running inside an existing container.
 
 .nf
 # Get output from running pod 123456\-7890, using the first container by default
-$ kubectl attach 123456\-7890
+kubectl attach 123456\-7890
 
 # Get output from ruby\-container from pod 123456\-7890
-$ kubectl attach 123456\-7890 \-c ruby\-container date
+kubectl attach 123456\-7890 \-c ruby\-container
 
-# Switch to raw terminal mode, sends stdin to 'bash' in ruby\-container from pod 123456\-780
+# Switch to raw terminal mode, sends stdin to 'bash' in ruby\-container from pod 123456\-7890
 # and sends stdout/stderr from 'bash' back to the client
-$ kubectl attach 123456\-7890 \-c ruby\-container \-i \-t
+kubectl attach 123456\-7890 \-c ruby\-container \-i \-t
 
 .fi
 .RE

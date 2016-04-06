@@ -20,20 +20,23 @@ import (
 	"testing"
 
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/apis/extensions"
 	// Ensure that extensions/v1beta1 package is initialized.
 	_ "k8s.io/kubernetes/pkg/apis/extensions/v1beta1"
 	"k8s.io/kubernetes/pkg/fields"
 	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/registrytest"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/tools"
+	etcdtesting "k8s.io/kubernetes/pkg/storage/etcd/testing"
 )
 
-func newStorage(t *testing.T) (*REST, *StatusREST, *tools.FakeEtcdClient) {
-	etcdStorage, fakeClient := registrytest.NewEtcdStorage(t, "extensions")
-	storage, statusStorage := NewREST(etcdStorage)
-	return storage, statusStorage, fakeClient
+func newStorage(t *testing.T) (*REST, *StatusREST, *etcdtesting.EtcdTestServer) {
+	etcdStorage, server := registrytest.NewEtcdStorage(t, extensions.GroupName)
+	restOptions := generic.RESTOptions{etcdStorage, generic.UndecoratedStorage, 1}
+	jobStorage, statusStorage := NewREST(restOptions)
+	return jobStorage, statusStorage, server
 }
 
 func validNewJob() *extensions.Job {
@@ -47,9 +50,10 @@ func validNewJob() *extensions.Job {
 		Spec: extensions.JobSpec{
 			Completions: &completions,
 			Parallelism: &parallelism,
-			Selector: &extensions.PodSelector{
+			Selector: &unversioned.LabelSelector{
 				MatchLabels: map[string]string{"a": "b"},
 			},
+			ManualSelector: newBool(true),
 			Template: api.PodTemplateSpec{
 				ObjectMeta: api.ObjectMeta{
 					Labels: map[string]string{"a": "b"},
@@ -71,8 +75,9 @@ func validNewJob() *extensions.Job {
 }
 
 func TestCreate(t *testing.T) {
-	storage, _, fakeClient := newStorage(t)
-	test := registrytest.New(t, fakeClient, storage.Etcd)
+	storage, _, server := newStorage(t)
+	defer server.Terminate(t)
+	test := registrytest.New(t, storage.Etcd)
 	validJob := validNewJob()
 	validJob.ObjectMeta = api.ObjectMeta{}
 	test.TestCreate(
@@ -82,7 +87,7 @@ func TestCreate(t *testing.T) {
 		&extensions.Job{
 			Spec: extensions.JobSpec{
 				Completions: validJob.Spec.Completions,
-				Selector:    &extensions.PodSelector{},
+				Selector:    &unversioned.LabelSelector{},
 				Template:    validJob.Spec.Template,
 			},
 		},
@@ -90,8 +95,9 @@ func TestCreate(t *testing.T) {
 }
 
 func TestUpdate(t *testing.T) {
-	storage, _, fakeClient := newStorage(t)
-	test := registrytest.New(t, fakeClient, storage.Etcd)
+	storage, _, server := newStorage(t)
+	defer server.Terminate(t)
+	test := registrytest.New(t, storage.Etcd)
 	two := 2
 	test.TestUpdate(
 		// valid
@@ -105,7 +111,7 @@ func TestUpdate(t *testing.T) {
 		// invalid updateFunc
 		func(obj runtime.Object) runtime.Object {
 			object := obj.(*extensions.Job)
-			object.Spec.Selector = &extensions.PodSelector{}
+			object.Spec.Selector = &unversioned.LabelSelector{}
 			return object
 		},
 		func(obj runtime.Object) runtime.Object {
@@ -117,26 +123,30 @@ func TestUpdate(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	storage, _, fakeClient := newStorage(t)
-	test := registrytest.New(t, fakeClient, storage.Etcd)
+	storage, _, server := newStorage(t)
+	defer server.Terminate(t)
+	test := registrytest.New(t, storage.Etcd)
 	test.TestDelete(validNewJob())
 }
 
 func TestGet(t *testing.T) {
-	storage, _, fakeClient := newStorage(t)
-	test := registrytest.New(t, fakeClient, storage.Etcd)
+	storage, _, server := newStorage(t)
+	defer server.Terminate(t)
+	test := registrytest.New(t, storage.Etcd)
 	test.TestGet(validNewJob())
 }
 
 func TestList(t *testing.T) {
-	storage, _, fakeClient := newStorage(t)
-	test := registrytest.New(t, fakeClient, storage.Etcd)
+	storage, _, server := newStorage(t)
+	defer server.Terminate(t)
+	test := registrytest.New(t, storage.Etcd)
 	test.TestList(validNewJob())
 }
 
 func TestWatch(t *testing.T) {
-	storage, _, fakeClient := newStorage(t)
-	test := registrytest.New(t, fakeClient, storage.Etcd)
+	storage, _, server := newStorage(t)
+	defer server.Terminate(t)
+	test := registrytest.New(t, storage.Etcd)
 	test.TestWatch(
 		validNewJob(),
 		// matching labels
@@ -156,3 +166,9 @@ func TestWatch(t *testing.T) {
 }
 
 // TODO: test update /status
+
+func newBool(val bool) *bool {
+	p := new(bool)
+	*p = val
+	return p
+}

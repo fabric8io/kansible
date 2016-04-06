@@ -18,15 +18,17 @@ package prober
 
 import (
 	"errors"
+	"fmt"
+	"net/http"
+	"reflect"
 	"testing"
-	"time"
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/client/record"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
+	"k8s.io/kubernetes/pkg/kubelet/prober/results"
 	"k8s.io/kubernetes/pkg/probe"
-	"k8s.io/kubernetes/pkg/util"
-	"k8s.io/kubernetes/pkg/util/exec"
+	"k8s.io/kubernetes/pkg/util/intstr"
 )
 
 func TestFormatURL(t *testing.T) {
@@ -76,14 +78,14 @@ func TestGetURLParts(t *testing.T) {
 		port  int
 		path  string
 	}{
-		{&api.HTTPGetAction{Host: "", Port: util.NewIntOrStringFromInt(-1), Path: ""}, false, "", -1, ""},
-		{&api.HTTPGetAction{Host: "", Port: util.NewIntOrStringFromString(""), Path: ""}, false, "", -1, ""},
-		{&api.HTTPGetAction{Host: "", Port: util.NewIntOrStringFromString("-1"), Path: ""}, false, "", -1, ""},
-		{&api.HTTPGetAction{Host: "", Port: util.NewIntOrStringFromString("not-found"), Path: ""}, false, "", -1, ""},
-		{&api.HTTPGetAction{Host: "", Port: util.NewIntOrStringFromString("found"), Path: ""}, true, "127.0.0.1", 93, ""},
-		{&api.HTTPGetAction{Host: "", Port: util.NewIntOrStringFromInt(76), Path: ""}, true, "127.0.0.1", 76, ""},
-		{&api.HTTPGetAction{Host: "", Port: util.NewIntOrStringFromString("118"), Path: ""}, true, "127.0.0.1", 118, ""},
-		{&api.HTTPGetAction{Host: "hostname", Port: util.NewIntOrStringFromInt(76), Path: "path"}, true, "hostname", 76, "path"},
+		{&api.HTTPGetAction{Host: "", Port: intstr.FromInt(-1), Path: ""}, false, "", -1, ""},
+		{&api.HTTPGetAction{Host: "", Port: intstr.FromString(""), Path: ""}, false, "", -1, ""},
+		{&api.HTTPGetAction{Host: "", Port: intstr.FromString("-1"), Path: ""}, false, "", -1, ""},
+		{&api.HTTPGetAction{Host: "", Port: intstr.FromString("not-found"), Path: ""}, false, "", -1, ""},
+		{&api.HTTPGetAction{Host: "", Port: intstr.FromString("found"), Path: ""}, true, "127.0.0.1", 93, ""},
+		{&api.HTTPGetAction{Host: "", Port: intstr.FromInt(76), Path: ""}, true, "127.0.0.1", 76, ""},
+		{&api.HTTPGetAction{Host: "", Port: intstr.FromString("118"), Path: ""}, true, "127.0.0.1", 118, ""},
+		{&api.HTTPGetAction{Host: "hostname", Port: intstr.FromInt(76), Path: "path"}, true, "hostname", 76, "path"},
 	}
 
 	for _, test := range testCases {
@@ -130,13 +132,13 @@ func TestGetTCPAddrParts(t *testing.T) {
 		host  string
 		port  int
 	}{
-		{&api.TCPSocketAction{Port: util.NewIntOrStringFromInt(-1)}, false, "", -1},
-		{&api.TCPSocketAction{Port: util.NewIntOrStringFromString("")}, false, "", -1},
-		{&api.TCPSocketAction{Port: util.NewIntOrStringFromString("-1")}, false, "", -1},
-		{&api.TCPSocketAction{Port: util.NewIntOrStringFromString("not-found")}, false, "", -1},
-		{&api.TCPSocketAction{Port: util.NewIntOrStringFromString("found")}, true, "1.2.3.4", 93},
-		{&api.TCPSocketAction{Port: util.NewIntOrStringFromInt(76)}, true, "1.2.3.4", 76},
-		{&api.TCPSocketAction{Port: util.NewIntOrStringFromString("118")}, true, "1.2.3.4", 118},
+		{&api.TCPSocketAction{Port: intstr.FromInt(-1)}, false, "", -1},
+		{&api.TCPSocketAction{Port: intstr.FromString("")}, false, "", -1},
+		{&api.TCPSocketAction{Port: intstr.FromString("-1")}, false, "", -1},
+		{&api.TCPSocketAction{Port: intstr.FromString("not-found")}, false, "", -1},
+		{&api.TCPSocketAction{Port: intstr.FromString("found")}, true, "1.2.3.4", 93},
+		{&api.TCPSocketAction{Port: intstr.FromInt(76)}, true, "1.2.3.4", 76},
+		{&api.TCPSocketAction{Port: intstr.FromString("118")}, true, "1.2.3.4", 118},
 	}
 
 	for _, test := range testCases {
@@ -164,276 +166,111 @@ func TestGetTCPAddrParts(t *testing.T) {
 	}
 }
 
-// TestProbeContainer tests the functionality of probeContainer.
-// Test cases are:
-//
-// No probe.
-// Only LivenessProbe.
-// Only ReadinessProbe.
-// Both probes.
-//
-// Also, for each probe, there will be several cases covering whether the initial
-// delay has passed, whether the probe handler will return Success, Failure,
-// Unknown or error.
-//
-// PLEASE READ THE PROBE DOCS BEFORE CHANGING THIS TEST IF YOU ARE UNSURE HOW PROBES ARE SUPPOSED TO WORK:
-// (See https://github.com/GoogleCloudPlatform/kubernetes/blob/master/docs/user-guide/pod-states.md#pod-conditions)
-func TestProbeContainer(t *testing.T) {
-	readinessManager := kubecontainer.NewReadinessManager()
-	prober := &prober{
-		readinessManager: readinessManager,
-		refManager:       kubecontainer.NewRefManager(),
-		recorder:         &record.FakeRecorder{},
-	}
-	containerID := "foobar"
-	createdAt := time.Now().Unix()
-
-	tests := []struct {
-		testContainer     api.Container
-		expectError       bool
-		expectedResult    probe.Result
-		expectedReadiness bool
+func TestHTTPHeaders(t *testing.T) {
+	testCases := []struct {
+		input  []api.HTTPHeader
+		output http.Header
 	}{
-		// No probes.
-		{
-			testContainer:     api.Container{},
-			expectedResult:    probe.Success,
-			expectedReadiness: true,
+		{[]api.HTTPHeader{}, http.Header{}},
+		{[]api.HTTPHeader{
+			{"X-Muffins-Or-Cupcakes", "Muffins"},
+		}, http.Header{"X-Muffins-Or-Cupcakes": {"Muffins"}}},
+		{[]api.HTTPHeader{
+			{"X-Muffins-Or-Cupcakes", "Muffins"},
+			{"X-Muffins-Or-Plumcakes", "Muffins!"},
+		}, http.Header{"X-Muffins-Or-Cupcakes": {"Muffins"},
+			"X-Muffins-Or-Plumcakes": {"Muffins!"}}},
+		{[]api.HTTPHeader{
+			{"X-Muffins-Or-Cupcakes", "Muffins"},
+			{"X-Muffins-Or-Cupcakes", "Cupcakes, too"},
+		}, http.Header{"X-Muffins-Or-Cupcakes": {"Muffins", "Cupcakes, too"}}},
+	}
+	for _, test := range testCases {
+		headers := buildHeader(test.input)
+		if !reflect.DeepEqual(test.output, headers) {
+			t.Errorf("Expected %#v, got %#v", test.output, headers)
+		}
+	}
+}
+
+func TestProbe(t *testing.T) {
+	prober := &prober{
+		refManager: kubecontainer.NewRefManager(),
+		recorder:   &record.FakeRecorder{},
+	}
+	containerID := kubecontainer.ContainerID{"test", "foobar"}
+
+	execProbe := &api.Probe{
+		Handler: api.Handler{
+			Exec: &api.ExecAction{},
 		},
-		// Only LivenessProbe. expectedReadiness should always be true here.
-		{
-			testContainer: api.Container{
-				LivenessProbe: &api.Probe{InitialDelaySeconds: 100},
-			},
-			expectedResult:    probe.Success,
-			expectedReadiness: true,
+	}
+	tests := []struct {
+		probe          *api.Probe
+		execError      bool
+		expectError    bool
+		execResult     probe.Result
+		expectedResult results.Result
+	}{
+		{ // No probe
+			probe:          nil,
+			expectedResult: results.Success,
 		},
-		{
-			testContainer: api.Container{
-				LivenessProbe: &api.Probe{InitialDelaySeconds: -100},
-			},
-			expectedResult:    probe.Unknown,
-			expectedReadiness: true,
+		{ // No handler
+			probe:          &api.Probe{},
+			expectError:    true,
+			expectedResult: results.Failure,
 		},
-		{
-			testContainer: api.Container{
-				LivenessProbe: &api.Probe{
-					InitialDelaySeconds: -100,
-					Handler: api.Handler{
-						Exec: &api.ExecAction{},
-					},
-				},
-			},
-			expectedResult:    probe.Failure,
-			expectedReadiness: true,
+		{ // Probe fails
+			probe:          execProbe,
+			execResult:     probe.Failure,
+			expectedResult: results.Failure,
 		},
-		{
-			testContainer: api.Container{
-				LivenessProbe: &api.Probe{
-					InitialDelaySeconds: -100,
-					Handler: api.Handler{
-						Exec: &api.ExecAction{},
-					},
-				},
-			},
-			expectedResult:    probe.Success,
-			expectedReadiness: true,
+		{ // Probe succeeds
+			probe:          execProbe,
+			execResult:     probe.Success,
+			expectedResult: results.Success,
 		},
-		{
-			testContainer: api.Container{
-				LivenessProbe: &api.Probe{
-					InitialDelaySeconds: -100,
-					Handler: api.Handler{
-						Exec: &api.ExecAction{},
-					},
-				},
-			},
-			expectedResult:    probe.Unknown,
-			expectedReadiness: true,
+		{ // Probe result is unknown
+			probe:          execProbe,
+			execResult:     probe.Unknown,
+			expectedResult: results.Failure,
 		},
-		{
-			testContainer: api.Container{
-				LivenessProbe: &api.Probe{
-					InitialDelaySeconds: -100,
-					Handler: api.Handler{
-						Exec: &api.ExecAction{},
-					},
-				},
-			},
-			expectError:       true,
-			expectedResult:    probe.Unknown,
-			expectedReadiness: true,
-		},
-		// // Only ReadinessProbe. expectedResult should always be probe.Success here.
-		{
-			testContainer: api.Container{
-				ReadinessProbe: &api.Probe{InitialDelaySeconds: 100},
-			},
-			expectedResult:    probe.Success,
-			expectedReadiness: false,
-		},
-		{
-			testContainer: api.Container{
-				ReadinessProbe: &api.Probe{InitialDelaySeconds: -100},
-			},
-			expectedResult:    probe.Success,
-			expectedReadiness: false,
-		},
-		{
-			testContainer: api.Container{
-				ReadinessProbe: &api.Probe{
-					InitialDelaySeconds: -100,
-					Handler: api.Handler{
-						Exec: &api.ExecAction{},
-					},
-				},
-			},
-			expectedResult:    probe.Success,
-			expectedReadiness: true,
-		},
-		{
-			testContainer: api.Container{
-				ReadinessProbe: &api.Probe{
-					InitialDelaySeconds: -100,
-					Handler: api.Handler{
-						Exec: &api.ExecAction{},
-					},
-				},
-			},
-			expectedResult:    probe.Success,
-			expectedReadiness: true,
-		},
-		{
-			testContainer: api.Container{
-				ReadinessProbe: &api.Probe{
-					InitialDelaySeconds: -100,
-					Handler: api.Handler{
-						Exec: &api.ExecAction{},
-					},
-				},
-			},
-			expectedResult:    probe.Success,
-			expectedReadiness: true,
-		},
-		{
-			testContainer: api.Container{
-				ReadinessProbe: &api.Probe{
-					InitialDelaySeconds: -100,
-					Handler: api.Handler{
-						Exec: &api.ExecAction{},
-					},
-				},
-			},
-			expectError:       false,
-			expectedResult:    probe.Success,
-			expectedReadiness: true,
-		},
-		// Both LivenessProbe and ReadinessProbe.
-		{
-			testContainer: api.Container{
-				LivenessProbe:  &api.Probe{InitialDelaySeconds: 100},
-				ReadinessProbe: &api.Probe{InitialDelaySeconds: 100},
-			},
-			expectedResult:    probe.Success,
-			expectedReadiness: false,
-		},
-		{
-			testContainer: api.Container{
-				LivenessProbe:  &api.Probe{InitialDelaySeconds: 100},
-				ReadinessProbe: &api.Probe{InitialDelaySeconds: -100},
-			},
-			expectedResult:    probe.Success,
-			expectedReadiness: false,
-		},
-		{
-			testContainer: api.Container{
-				LivenessProbe:  &api.Probe{InitialDelaySeconds: -100},
-				ReadinessProbe: &api.Probe{InitialDelaySeconds: 100},
-			},
-			expectedResult:    probe.Unknown,
-			expectedReadiness: false,
-		},
-		{
-			testContainer: api.Container{
-				LivenessProbe:  &api.Probe{InitialDelaySeconds: -100},
-				ReadinessProbe: &api.Probe{InitialDelaySeconds: -100},
-			},
-			expectedResult:    probe.Unknown,
-			expectedReadiness: false,
-		},
-		{
-			testContainer: api.Container{
-				LivenessProbe: &api.Probe{
-					InitialDelaySeconds: -100,
-					Handler: api.Handler{
-						Exec: &api.ExecAction{},
-					},
-				},
-				ReadinessProbe: &api.Probe{InitialDelaySeconds: -100},
-			},
-			expectedResult:    probe.Unknown,
-			expectedReadiness: false,
-		},
-		{
-			testContainer: api.Container{
-				LivenessProbe: &api.Probe{
-					InitialDelaySeconds: -100,
-					Handler: api.Handler{
-						Exec: &api.ExecAction{},
-					},
-				},
-				ReadinessProbe: &api.Probe{InitialDelaySeconds: -100},
-			},
-			expectedResult:    probe.Failure,
-			expectedReadiness: false,
-		},
-		{
-			testContainer: api.Container{
-				LivenessProbe: &api.Probe{
-					InitialDelaySeconds: -100,
-					Handler: api.Handler{
-						Exec: &api.ExecAction{},
-					},
-				},
-				ReadinessProbe: &api.Probe{
-					InitialDelaySeconds: -100,
-					Handler: api.Handler{
-						Exec: &api.ExecAction{},
-					},
-				},
-			},
-			expectedResult:    probe.Success,
-			expectedReadiness: true,
+		{ // Probe has an error
+			probe:          execProbe,
+			execError:      true,
+			expectError:    true,
+			execResult:     probe.Unknown,
+			expectedResult: results.Failure,
 		},
 	}
 
 	for i, test := range tests {
-		if test.expectError {
-			prober.exec = fakeExecProber{test.expectedResult, errors.New("exec error")}
-		} else {
-			prober.exec = fakeExecProber{test.expectedResult, nil}
-		}
-		result, err := prober.Probe(&api.Pod{}, api.PodStatus{}, test.testContainer, containerID, createdAt)
-		if test.expectError && err == nil {
-			t.Errorf("[%d] Expected error but no error was returned.", i)
-		}
-		if !test.expectError && err != nil {
-			t.Errorf("[%d] Didn't expect error but got: %v", i, err)
-		}
-		if test.expectedResult != result {
-			t.Errorf("[%d] Expected result to be %v but was %v", i, test.expectedResult, result)
-		}
-		if test.expectedReadiness != readinessManager.GetReadiness(containerID) {
-			t.Errorf("[%d] Expected readiness to be %v but was %v", i, test.expectedReadiness, readinessManager.GetReadiness(containerID))
+		for _, probeType := range [...]probeType{liveness, readiness} {
+			testID := fmt.Sprintf("%d-%s", i, probeType)
+			testContainer := api.Container{}
+			switch probeType {
+			case liveness:
+				testContainer.LivenessProbe = test.probe
+			case readiness:
+				testContainer.ReadinessProbe = test.probe
+			}
+			if test.execError {
+				prober.exec = fakeExecProber{test.execResult, errors.New("exec error")}
+			} else {
+				prober.exec = fakeExecProber{test.execResult, nil}
+			}
+
+			result, err := prober.probe(probeType, &api.Pod{}, api.PodStatus{}, testContainer, containerID)
+			if test.expectError && err == nil {
+				t.Errorf("[%s] Expected probe error but no error was returned.", testID)
+			}
+			if !test.expectError && err != nil {
+				t.Errorf("[%s] Didn't expect probe error but got: %v", testID, err)
+			}
+			if test.expectedResult != result {
+				t.Errorf("[%s] Expected result to be %v but was %v", testID, test.expectedResult, result)
+			}
 		}
 	}
-}
-
-type fakeExecProber struct {
-	result probe.Result
-	err    error
-}
-
-func (p fakeExecProber) Probe(_ exec.Cmd) (probe.Result, string, error) {
-	return p.result, "", p.err
 }

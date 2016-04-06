@@ -19,19 +19,24 @@ package app
 // This file exists to force the desired plugin implementations to be linked.
 import (
 	// Credential providers
+	_ "k8s.io/kubernetes/pkg/credentialprovider/aws"
 	_ "k8s.io/kubernetes/pkg/credentialprovider/gcp"
 	// Network plugins
 	"k8s.io/kubernetes/pkg/kubelet/network"
 	"k8s.io/kubernetes/pkg/kubelet/network/cni"
 	"k8s.io/kubernetes/pkg/kubelet/network/exec"
+	"k8s.io/kubernetes/pkg/kubelet/network/kubenet"
 	// Volume plugins
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/aws_ebs"
+	"k8s.io/kubernetes/pkg/volume/azure_file"
 	"k8s.io/kubernetes/pkg/volume/cephfs"
 	"k8s.io/kubernetes/pkg/volume/cinder"
+	"k8s.io/kubernetes/pkg/volume/configmap"
 	"k8s.io/kubernetes/pkg/volume/downwardapi"
 	"k8s.io/kubernetes/pkg/volume/empty_dir"
 	"k8s.io/kubernetes/pkg/volume/fc"
+	"k8s.io/kubernetes/pkg/volume/flexvolume"
 	"k8s.io/kubernetes/pkg/volume/flocker"
 	"k8s.io/kubernetes/pkg/volume/gce_pd"
 	"k8s.io/kubernetes/pkg/volume/git_repo"
@@ -42,12 +47,14 @@ import (
 	"k8s.io/kubernetes/pkg/volume/persistent_claim"
 	"k8s.io/kubernetes/pkg/volume/rbd"
 	"k8s.io/kubernetes/pkg/volume/secret"
-	//Cloud providers
+	// Cloud providers
 	_ "k8s.io/kubernetes/pkg/cloudprovider/providers"
 )
 
 // ProbeVolumePlugins collects all volume plugins into an easy to use list.
-func ProbeVolumePlugins() []volume.VolumePlugin {
+// PluginDir specifies the directory to search for additional third party
+// volume plugins.
+func ProbeVolumePlugins(pluginDir string) []volume.VolumePlugin {
 	allPlugins := []volume.VolumePlugin{}
 
 	// The list of plugins to probe is decided by the kubelet binary, not
@@ -72,6 +79,9 @@ func ProbeVolumePlugins() []volume.VolumePlugin {
 	allPlugins = append(allPlugins, downwardapi.ProbeVolumePlugins()...)
 	allPlugins = append(allPlugins, fc.ProbeVolumePlugins()...)
 	allPlugins = append(allPlugins, flocker.ProbeVolumePlugins()...)
+	allPlugins = append(allPlugins, flexvolume.ProbeVolumePlugins(pluginDir)...)
+	allPlugins = append(allPlugins, azure_file.ProbeVolumePlugins()...)
+	allPlugins = append(allPlugins, configmap.ProbeVolumePlugins()...)
 	return allPlugins
 }
 
@@ -82,6 +92,7 @@ func ProbeNetworkPlugins(pluginDir string) []network.NetworkPlugin {
 	// for each existing plugin, add to the list
 	allPlugins = append(allPlugins, exec.ProbeNetworkPlugins(pluginDir)...)
 	allPlugins = append(allPlugins, cni.ProbeNetworkPlugins(pluginDir)...)
+	allPlugins = append(allPlugins, kubenet.NewPlugin())
 
 	return allPlugins
 }

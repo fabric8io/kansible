@@ -22,8 +22,25 @@ import (
 
 	docker "github.com/fsouza/go-dockerclient"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
-	"k8s.io/kubernetes/pkg/types"
 )
+
+func TestMapState(t *testing.T) {
+	testCases := []struct {
+		input    string
+		expected kubecontainer.ContainerState
+	}{
+		{input: "Up 5 hours", expected: kubecontainer.ContainerStateRunning},
+		{input: "Exited (0) 2 hours ago", expected: kubecontainer.ContainerStateExited},
+		{input: "Created", expected: kubecontainer.ContainerStateUnknown},
+		{input: "Random string", expected: kubecontainer.ContainerStateUnknown},
+	}
+
+	for i, test := range testCases {
+		if actual := mapState(test.input); actual != test.expected {
+			t.Errorf("Test[%d]: expected %q, got %q", i, test.expected, actual)
+		}
+	}
+}
 
 func TestToRuntimeContainer(t *testing.T) {
 	original := &docker.APIContainers{
@@ -31,13 +48,15 @@ func TestToRuntimeContainer(t *testing.T) {
 		Image:   "bar_image",
 		Created: 12345,
 		Names:   []string{"/k8s_bar.5678_foo_ns_1234_42"},
+		Status:  "Up 5 hours",
 	}
 	expected := &kubecontainer.Container{
-		ID:      types.UID("ab2cdf"),
+		ID:      kubecontainer.ContainerID{"docker", "ab2cdf"},
 		Name:    "bar",
 		Image:   "bar_image",
 		Hash:    0x5678,
 		Created: 12345,
+		State:   kubecontainer.ContainerStateRunning,
 	}
 
 	actual, err := toRuntimeContainer(original)
@@ -56,9 +75,9 @@ func TestToRuntimeImage(t *testing.T) {
 		VirtualSize: 1234,
 	}
 	expected := &kubecontainer.Image{
-		ID:   "aeeea",
-		Tags: []string{"abc", "def"},
-		Size: 1234,
+		ID:       "aeeea",
+		RepoTags: []string{"abc", "def"},
+		Size:     1234,
 	}
 
 	actual, err := toRuntimeImage(original)

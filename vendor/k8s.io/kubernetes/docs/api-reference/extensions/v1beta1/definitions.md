@@ -3,13 +3,16 @@
 
 <!-- END MUNGE: UNVERSIONED_WARNING -->
 <!-- needed for gh-pages to render html files when imported -->
-{% include v1.1/extensions-v1beta1-definitions.html %}
+{% include v1.2/extensions-v1beta1-definitions.html %}
+
+
+
+
+
 
 <!-- BEGIN MUNGE: IS_VERSIONED -->
 <!-- TAG IS_VERSIONED -->
 <!-- END MUNGE: IS_VERSIONED -->
-
-
 
 
 <!-- BEGIN MUNGE: GENERATED_ANALYTICS -->

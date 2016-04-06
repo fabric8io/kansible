@@ -18,44 +18,37 @@ package master
 
 import (
 	"fmt"
-	"io/ioutil"
-	"math/rand"
+	"io"
 	"net"
 	"net/http"
-	"net/http/pprof"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"k8s.io/kubernetes/pkg/admission"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/latest"
-	"k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/api/rest"
 	"k8s.io/kubernetes/pkg/api/unversioned"
-	apiutil "k8s.io/kubernetes/pkg/api/util"
-	"k8s.io/kubernetes/pkg/api/v1"
-	expapi "k8s.io/kubernetes/pkg/apis/extensions"
+	"k8s.io/kubernetes/pkg/apimachinery/registered"
+	"k8s.io/kubernetes/pkg/apis/autoscaling"
+	"k8s.io/kubernetes/pkg/apis/batch"
+	"k8s.io/kubernetes/pkg/apis/extensions"
 	"k8s.io/kubernetes/pkg/apiserver"
-	"k8s.io/kubernetes/pkg/auth/authenticator"
-	"k8s.io/kubernetes/pkg/auth/authorizer"
-	"k8s.io/kubernetes/pkg/auth/handlers"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/fields"
+	apiservermetrics "k8s.io/kubernetes/pkg/apiserver/metrics"
+	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/healthz"
-	"k8s.io/kubernetes/pkg/labels"
+	kubeletclient "k8s.io/kubernetes/pkg/kubelet/client"
 	"k8s.io/kubernetes/pkg/master/ports"
 	"k8s.io/kubernetes/pkg/registry/componentstatus"
+	configmapetcd "k8s.io/kubernetes/pkg/registry/configmap/etcd"
 	controlleretcd "k8s.io/kubernetes/pkg/registry/controller/etcd"
 	deploymentetcd "k8s.io/kubernetes/pkg/registry/deployment/etcd"
 	"k8s.io/kubernetes/pkg/registry/endpoint"
 	endpointsetcd "k8s.io/kubernetes/pkg/registry/endpoint/etcd"
 	eventetcd "k8s.io/kubernetes/pkg/registry/event/etcd"
 	expcontrolleretcd "k8s.io/kubernetes/pkg/registry/experimental/controller/etcd"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	ingressetcd "k8s.io/kubernetes/pkg/registry/ingress/etcd"
 	jobetcd "k8s.io/kubernetes/pkg/registry/job/etcd"
 	limitrangeetcd "k8s.io/kubernetes/pkg/registry/limitrange/etcd"
@@ -66,7 +59,9 @@ import (
 	pvetcd "k8s.io/kubernetes/pkg/registry/persistentvolume/etcd"
 	pvcetcd "k8s.io/kubernetes/pkg/registry/persistentvolumeclaim/etcd"
 	podetcd "k8s.io/kubernetes/pkg/registry/pod/etcd"
+	pspetcd "k8s.io/kubernetes/pkg/registry/podsecuritypolicy/etcd"
 	podtemplateetcd "k8s.io/kubernetes/pkg/registry/podtemplate/etcd"
+	replicasetetcd "k8s.io/kubernetes/pkg/registry/replicaset/etcd"
 	resourcequotaetcd "k8s.io/kubernetes/pkg/registry/resourcequota/etcd"
 	secretetcd "k8s.io/kubernetes/pkg/registry/secret/etcd"
 	"k8s.io/kubernetes/pkg/registry/service"
@@ -77,227 +72,42 @@ import (
 	thirdpartyresourceetcd "k8s.io/kubernetes/pkg/registry/thirdpartyresource/etcd"
 	"k8s.io/kubernetes/pkg/registry/thirdpartyresourcedata"
 	thirdpartyresourcedataetcd "k8s.io/kubernetes/pkg/registry/thirdpartyresourcedata/etcd"
+	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/storage"
-	etcdstorage "k8s.io/kubernetes/pkg/storage/etcd"
-	"k8s.io/kubernetes/pkg/tools"
-	"k8s.io/kubernetes/pkg/ui"
-	"k8s.io/kubernetes/pkg/util"
+	etcdmetrics "k8s.io/kubernetes/pkg/storage/etcd/metrics"
+	etcdutil "k8s.io/kubernetes/pkg/storage/etcd/util"
 	"k8s.io/kubernetes/pkg/util/sets"
-	utilSets "k8s.io/kubernetes/pkg/util/sets"
+	"k8s.io/kubernetes/pkg/util/wait"
 
 	daemonetcd "k8s.io/kubernetes/pkg/registry/daemonset/etcd"
 	horizontalpodautoscaleretcd "k8s.io/kubernetes/pkg/registry/horizontalpodautoscaler/etcd"
 
-	"github.com/emicklei/go-restful"
-	"github.com/emicklei/go-restful/swagger"
 	"github.com/golang/glog"
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/kubernetes/pkg/registry/service/allocator"
 	"k8s.io/kubernetes/pkg/registry/service/portallocator"
 )
 
-const (
-	DefaultEtcdPathPrefix = "/registry"
-)
-
-// StorageDestinations is a mapping from API group & resource to
-// the underlying storage interfaces.
-type StorageDestinations struct {
-	APIGroups map[string]*StorageDestinationsForAPIGroup
-}
-
-type StorageDestinationsForAPIGroup struct {
-	Default   storage.Interface
-	Overrides map[string]storage.Interface
-}
-
-func NewStorageDestinations() StorageDestinations {
-	return StorageDestinations{
-		APIGroups: map[string]*StorageDestinationsForAPIGroup{},
-	}
-}
-
-func (s *StorageDestinations) AddAPIGroup(group string, defaultStorage storage.Interface) {
-	s.APIGroups[group] = &StorageDestinationsForAPIGroup{
-		Default:   defaultStorage,
-		Overrides: map[string]storage.Interface{},
-	}
-}
-
-func (s *StorageDestinations) AddStorageOverride(group, resource string, override storage.Interface) {
-	if _, ok := s.APIGroups[group]; !ok {
-		s.AddAPIGroup(group, nil)
-	}
-	if s.APIGroups[group].Overrides == nil {
-		s.APIGroups[group].Overrides = map[string]storage.Interface{}
-	}
-	s.APIGroups[group].Overrides[resource] = override
-}
-
-func (s *StorageDestinations) get(group, resource string) storage.Interface {
-	apigroup, ok := s.APIGroups[group]
-	if !ok {
-		glog.Errorf("No storage defined for API group: '%s'", apigroup)
-		return nil
-	}
-	if apigroup.Overrides != nil {
-		if client, exists := apigroup.Overrides[resource]; exists {
-			return client
-		}
-	}
-	return apigroup.Default
-}
-
-// Get all backends for all registered storage destinations.
-// Used for getting all instances for health validations.
-func (s *StorageDestinations) backends() []string {
-	backends := sets.String{}
-	for _, group := range s.APIGroups {
-		if group.Default != nil {
-			for _, backend := range group.Default.Backends() {
-				backends.Insert(backend)
-			}
-		}
-		if group.Overrides != nil {
-			for _, storage := range group.Overrides {
-				for _, backend := range storage.Backends() {
-					backends.Insert(backend)
-				}
-			}
-		}
-	}
-	return backends.List()
-}
-
-// Specifies the overrides for various API group versions.
-// This can be used to enable/disable entire group versions or specific resources.
-type APIGroupVersionOverride struct {
-	// Whether to enable or disable this group version.
-	Disable bool
-	// List of overrides for individual resources in this group version.
-	ResourceOverrides map[string]bool
-}
-
-// Config is a structure used to configure a Master.
 type Config struct {
-	StorageDestinations StorageDestinations
-	// StorageVersions is a map between groups and their storage versions
-	StorageVersions map[string]string
-	EventTTL        time.Duration
-	NodeRegexp      string
-	KubeletClient   client.KubeletClient
-	// allow downstream consumers to disable the core controller loops
-	EnableCoreControllers bool
-	EnableLogsSupport     bool
-	EnableUISupport       bool
-	// allow downstream consumers to disable swagger
-	EnableSwaggerSupport bool
-	// Allows api group versions or specific resources to be conditionally enabled/disabled.
-	APIGroupVersionOverrides map[string]APIGroupVersionOverride
-	// allow downstream consumers to disable the index route
-	EnableIndex           bool
-	EnableProfiling       bool
-	EnableWatchCache      bool
-	APIPrefix             string
-	APIGroupPrefix        string
-	CorsAllowedOriginList []string
-	Authenticator         authenticator.Request
-	// TODO(roberthbailey): Remove once the server no longer supports http basic auth.
-	SupportsBasicAuth      bool
-	Authorizer             authorizer.Authorizer
-	AdmissionControl       admission.Interface
-	MasterServiceNamespace string
+	*genericapiserver.Config
 
-	// Map requests to contexts. Exported so downstream consumers can provider their own mappers
-	RequestContextMapper api.RequestContextMapper
-
-	// If specified, all web services will be registered into this container
-	RestfulContainer *restful.Container
-
-	// If specified, requests will be allocated a random timeout between this value, and twice this value.
-	// Note that it is up to the request handlers to ignore or honor this timeout. In seconds.
-	MinRequestTimeout int
-
-	// Number of masters running; all masters must be started with the
-	// same value for this field. (Numbers > 1 currently untested.)
-	MasterCount int
-
-	// The port on PublicAddress where a read-write server will be installed.
-	// Defaults to 6443 if not set.
-	ReadWritePort int
-
-	// ExternalHost is the host name to use for external (public internet) facing URLs (e.g. Swagger)
-	ExternalHost string
-
-	// PublicAddress is the IP address where members of the cluster (kubelet,
-	// kube-proxy, services, etc.) can reach the master.
-	// If nil or 0.0.0.0, the host's default interface will be used.
-	PublicAddress net.IP
-
-	// Control the interval that pod, node IP, and node heath status caches
-	// expire.
-	CacheTimeout time.Duration
-
-	// The name of the cluster.
-	ClusterName string
-
-	// The range of IPs to be assigned to services with type=ClusterIP or greater
-	ServiceClusterIPRange *net.IPNet
-
-	// The IP address for the master service (must be inside ServiceClusterIPRange
-	ServiceReadWriteIP net.IP
-
-	// The range of ports to be assigned to services with type=NodePort or greater
-	ServiceNodePortRange util.PortRange
-
-	// Used for secure proxy.  If empty, don't use secure proxy.
-	SSHUser       string
-	SSHKeyfile    string
-	InstallSSHKey InstallSSHKey
+	EnableCoreControllers   bool
+	DeleteCollectionWorkers int
+	EventTTL                time.Duration
+	KubeletClient           kubeletclient.KubeletClient
+	// Used to start and monitor tunneling
+	Tunneler Tunneler
 }
-
-type InstallSSHKey func(user string, data []byte) error
 
 // Master contains state for a Kubernetes cluster master/api server.
 type Master struct {
-	// "Inputs", Copied from Config
-	serviceClusterIPRange *net.IPNet
-	serviceNodePortRange  util.PortRange
-	cacheTimeout          time.Duration
-	minRequestTimeout     time.Duration
+	*genericapiserver.GenericAPIServer
 
-	mux                      apiserver.Mux
-	muxHelper                *apiserver.MuxHelper
-	handlerContainer         *restful.Container
-	rootWebService           *restful.WebService
-	enableCoreControllers    bool
-	enableLogsSupport        bool
-	enableUISupport          bool
-	enableSwaggerSupport     bool
-	enableProfiling          bool
-	enableWatchCache         bool
-	apiPrefix                string
-	apiGroupPrefix           string
-	corsAllowedOriginList    []string
-	authenticator            authenticator.Request
-	authorizer               authorizer.Authorizer
-	admissionControl         admission.Interface
-	masterCount              int
-	apiGroupVersionOverrides map[string]APIGroupVersionOverride
-	requestContextMapper     api.RequestContextMapper
+	// Map of v1 resources to their REST storages.
+	v1ResourcesStorage map[string]rest.Storage
 
-	// External host is the name that should be used in external (public internet) URLs for this master
-	externalHost string
-	// clusterIP is the IP address of the master within the cluster.
-	clusterIP            net.IP
-	publicReadWritePort  int
-	serviceReadWriteIP   net.IP
-	serviceReadWritePort int
-	masterServices       *util.Runner
-
-	// storage contains the RESTful endpoints exposed by this master
-	storage map[string]rest.Storage
-
+	enableCoreControllers   bool
+	deleteCollectionWorkers int
 	// registries are internal client APIs for accessing the storage layer
 	// TODO: define the internal typed interface in a way that clients can
 	// also be replaced
@@ -308,257 +118,288 @@ type Master struct {
 	serviceClusterIPAllocator service.RangeRegistry
 	serviceNodePortAllocator  service.RangeRegistry
 
-	// "Outputs"
-	Handler         http.Handler
-	InsecureHandler http.Handler
-
-	// Used for secure proxy
-	dialer         apiserver.ProxyDialerFunc
-	tunnels        *util.SSHTunnelList
-	tunnelsLock    sync.Mutex
-	installSSHKey  InstallSSHKey
-	lastSync       int64 // Seconds since Epoch
-	lastSyncMetric prometheus.GaugeFunc
-	clock          util.Clock
-
 	// storage for third party objects
 	thirdPartyStorage storage.Interface
-	// map from api path to storage for those objects
-	thirdPartyResources map[string]*thirdpartyresourcedataetcd.REST
+	// map from api path to a tuple of (storage for the objects, APIGroup)
+	thirdPartyResources map[string]thirdPartyEntry
 	// protects the map
 	thirdPartyResourcesLock sync.RWMutex
+
+	// Used to start and monitor tunneling
+	tunneler Tunneler
 }
 
-// NewEtcdStorage returns a storage.Interface for the provided arguments or an error if the version
-// is incorrect.
-func NewEtcdStorage(client tools.EtcdClient, interfacesFunc meta.VersionInterfacesFunc, version, prefix string) (etcdStorage storage.Interface, err error) {
-	versionInterfaces, err := interfacesFunc(version)
-	if err != nil {
-		return etcdStorage, err
-	}
-	return etcdstorage.NewEtcdStorage(client, versionInterfaces.Codec, prefix), nil
-}
-
-// setDefaults fills in any fields not set that are required to have valid data.
-func setDefaults(c *Config) {
-	if c.ServiceClusterIPRange == nil {
-		defaultNet := "10.0.0.0/24"
-		glog.Warningf("Network range for service cluster IPs is unspecified. Defaulting to %v.", defaultNet)
-		_, serviceClusterIPRange, err := net.ParseCIDR(defaultNet)
-		if err != nil {
-			glog.Fatalf("Unable to parse CIDR: %v", err)
-		}
-		if size := ipallocator.RangeSize(serviceClusterIPRange); size < 8 {
-			glog.Fatalf("The service cluster IP range must be at least %d IP addresses", 8)
-		}
-		c.ServiceClusterIPRange = serviceClusterIPRange
-	}
-	if c.ServiceReadWriteIP == nil {
-		// Select the first valid IP from ServiceClusterIPRange to use as the master service IP.
-		serviceReadWriteIP, err := ipallocator.GetIndexedIP(c.ServiceClusterIPRange, 1)
-		if err != nil {
-			glog.Fatalf("Failed to generate service read-write IP for master service: %v", err)
-		}
-		glog.V(4).Infof("Setting master service IP to %q (read-write).", serviceReadWriteIP)
-		c.ServiceReadWriteIP = serviceReadWriteIP
-	}
-	if c.ServiceNodePortRange.Size == 0 {
-		// TODO: Currently no way to specify an empty range (do we need to allow this?)
-		// We should probably allow this for clouds that don't require NodePort to do load-balancing (GCE)
-		// but then that breaks the strict nestedness of ServiceType.
-		// Review post-v1
-		defaultServiceNodePortRange := util.PortRange{Base: 30000, Size: 2768}
-		c.ServiceNodePortRange = defaultServiceNodePortRange
-		glog.Infof("Node port range unspecified. Defaulting to %v.", c.ServiceNodePortRange)
-	}
-	if c.MasterCount == 0 {
-		// Clearly, there will be at least one master.
-		c.MasterCount = 1
-	}
-	if c.ReadWritePort == 0 {
-		c.ReadWritePort = 6443
-	}
-	if c.CacheTimeout == 0 {
-		c.CacheTimeout = 5 * time.Second
-	}
-	for c.PublicAddress == nil || c.PublicAddress.IsUnspecified() || c.PublicAddress.IsLoopback() {
-		// TODO: This should be done in the caller and just require a
-		// valid value to be passed in.
-		hostIP, err := util.ChooseHostInterface()
-		if err != nil {
-			glog.Fatalf("Unable to find suitable network address.error='%v' . "+
-				"Will try again in 5 seconds. Set the public address directly to avoid this wait.", err)
-			time.Sleep(5 * time.Second)
-		}
-		c.PublicAddress = hostIP
-		glog.Infof("Will report %v as public IP address.", c.PublicAddress)
-	}
-	if c.RequestContextMapper == nil {
-		c.RequestContextMapper = api.NewRequestContextMapper()
-	}
+// thirdPartyEntry combines objects storage and API group into one struct
+// for easy lookup.
+type thirdPartyEntry struct {
+	storage *thirdpartyresourcedataetcd.REST
+	group   unversioned.APIGroup
 }
 
 // New returns a new instance of Master from the given config.
-// Certain config fields will be set to a default value if unset,
-// including:
-//   ServiceClusterIPRange
-//   ServiceNodePortRange
-//   MasterCount
-//   ReadWritePort
-//   PublicAddress
+// Certain config fields will be set to a default value if unset.
 // Certain config fields must be specified, including:
 //   KubeletClient
-// Public fields:
-//   Handler -- The returned master has a field TopHandler which is an
-//   http.Handler which handles all the endpoints provided by the master,
-//   including the API, the UI, and miscellaneous debugging endpoints.  All
-//   these are subject to authorization and authentication.
-//   InsecureHandler -- an http.Handler which handles all the same
-//   endpoints as Handler, but no authorization and authentication is done.
-// Public methods:
-//   HandleWithAuth -- Allows caller to add an http.Handler for an endpoint
-//   that uses the same authentication and authorization (if any is configured)
-//   as the master's built-in endpoints.
-//   If the caller wants to add additional endpoints not using the master's
-//   auth, then the caller should create a handler for those endpoints, which delegates the
-//   any unhandled paths to "Handler".
-func New(c *Config) *Master {
-	setDefaults(c)
+func New(c *Config) (*Master, error) {
 	if c.KubeletClient == nil {
-		glog.Fatalf("master.New() called with config.KubeletClient == nil")
+		return nil, fmt.Errorf("Master.New() called with config.KubeletClient == nil")
+	}
+
+	s, err := genericapiserver.New(c.Config)
+	if err != nil {
+		return nil, err
 	}
 
 	m := &Master{
-		serviceClusterIPRange:    c.ServiceClusterIPRange,
-		serviceNodePortRange:     c.ServiceNodePortRange,
-		rootWebService:           new(restful.WebService),
-		enableCoreControllers:    c.EnableCoreControllers,
-		enableLogsSupport:        c.EnableLogsSupport,
-		enableUISupport:          c.EnableUISupport,
-		enableSwaggerSupport:     c.EnableSwaggerSupport,
-		enableProfiling:          c.EnableProfiling,
-		enableWatchCache:         c.EnableWatchCache,
-		apiPrefix:                c.APIPrefix,
-		apiGroupPrefix:           c.APIGroupPrefix,
-		corsAllowedOriginList:    c.CorsAllowedOriginList,
-		authenticator:            c.Authenticator,
-		authorizer:               c.Authorizer,
-		admissionControl:         c.AdmissionControl,
-		apiGroupVersionOverrides: c.APIGroupVersionOverrides,
-		requestContextMapper:     c.RequestContextMapper,
+		GenericAPIServer:        s,
+		enableCoreControllers:   c.EnableCoreControllers,
+		deleteCollectionWorkers: c.DeleteCollectionWorkers,
+		tunneler:                c.Tunneler,
+	}
+	m.InstallAPIs(c)
 
-		cacheTimeout:      c.CacheTimeout,
-		minRequestTimeout: time.Duration(c.MinRequestTimeout) * time.Second,
-
-		masterCount:         c.MasterCount,
-		externalHost:        c.ExternalHost,
-		clusterIP:           c.PublicAddress,
-		publicReadWritePort: c.ReadWritePort,
-		serviceReadWriteIP:  c.ServiceReadWriteIP,
-		// TODO: serviceReadWritePort should be passed in as an argument, it may not always be 443
-		serviceReadWritePort: 443,
-
-		installSSHKey: c.InstallSSHKey,
+	// TODO: Attempt clean shutdown?
+	if m.enableCoreControllers {
+		m.NewBootstrapController().Start()
 	}
 
-	var handlerContainer *restful.Container
-	if c.RestfulContainer != nil {
-		m.mux = c.RestfulContainer.ServeMux
-		handlerContainer = c.RestfulContainer
-	} else {
-		mux := http.NewServeMux()
-		m.mux = mux
-		handlerContainer = NewHandlerContainer(mux)
+	return m, nil
+}
+
+func resetMetrics(w http.ResponseWriter, req *http.Request) {
+	apiservermetrics.Reset()
+	etcdmetrics.Reset()
+	io.WriteString(w, "metrics reset\n")
+}
+
+func (m *Master) InstallAPIs(c *Config) {
+	apiGroupsInfo := []genericapiserver.APIGroupInfo{}
+
+	// Install v1 unless disabled.
+	if !m.ApiGroupVersionOverrides["api/v1"].Disable {
+		// Install v1 API.
+		m.initV1ResourcesStorage(c)
+		apiGroupInfo := genericapiserver.APIGroupInfo{
+			GroupMeta: *registered.GroupOrDie(api.GroupName),
+			VersionedResourcesStorageMap: map[string]map[string]rest.Storage{
+				"v1": m.v1ResourcesStorage,
+			},
+			IsLegacyGroup:        true,
+			Scheme:               api.Scheme,
+			ParameterCodec:       api.ParameterCodec,
+			NegotiatedSerializer: api.Codecs,
+		}
+		if autoscalingGroupVersion := (unversioned.GroupVersion{Group: "autoscaling", Version: "v1"}); registered.IsEnabledVersion(autoscalingGroupVersion) {
+			apiGroupInfo.SubresourceGroupVersionKind = map[string]unversioned.GroupVersionKind{
+				"replicationcontrollers/scale": autoscalingGroupVersion.WithKind("Scale"),
+			}
+		}
+		apiGroupsInfo = append(apiGroupsInfo, apiGroupInfo)
 	}
-	m.handlerContainer = handlerContainer
-	// Use CurlyRouter to be able to use regular expressions in paths. Regular expressions are required in paths for example for proxy (where the path is proxy/{kind}/{name}/{*})
-	m.handlerContainer.Router(restful.CurlyRouter{})
-	m.muxHelper = &apiserver.MuxHelper{Mux: m.mux, RegisteredPaths: []string{}}
 
-	m.init(c)
-
-	return m
-}
-
-// HandleWithAuth adds an http.Handler for pattern to an http.ServeMux
-// Applies the same authentication and authorization (if any is configured)
-// to the request is used for the master's built-in endpoints.
-func (m *Master) HandleWithAuth(pattern string, handler http.Handler) {
-	// TODO: Add a way for plugged-in endpoints to translate their
-	// URLs into attributes that an Authorizer can understand, and have
-	// sensible policy defaults for plugged-in endpoints.  This will be different
-	// for generic endpoints versus REST object endpoints.
-	// TODO: convert to go-restful
-	m.muxHelper.Handle(pattern, handler)
-}
-
-// HandleFuncWithAuth adds an http.Handler for pattern to an http.ServeMux
-// Applies the same authentication and authorization (if any is configured)
-// to the request is used for the master's built-in endpoints.
-func (m *Master) HandleFuncWithAuth(pattern string, handler func(http.ResponseWriter, *http.Request)) {
-	// TODO: convert to go-restful
-	m.muxHelper.HandleFunc(pattern, handler)
-}
-
-func NewHandlerContainer(mux *http.ServeMux) *restful.Container {
-	container := restful.NewContainer()
-	container.ServeMux = mux
-	apiserver.InstallRecoverHandler(container)
-	return container
-}
-
-// init initializes master.
-func (m *Master) init(c *Config) {
+	// Run the tunneler.
 	healthzChecks := []healthz.HealthzChecker{}
-	m.clock = util.RealClock{}
-	dbClient := func(resource string) storage.Interface { return c.StorageDestinations.get("", resource) }
-	podStorage := podetcd.NewStorage(dbClient("pods"), c.EnableWatchCache, c.KubeletClient)
+	if m.tunneler != nil {
+		m.tunneler.Run(m.getNodeAddresses)
+		healthzChecks = append(healthzChecks, healthz.NamedCheck("SSH Tunnel Check", m.IsTunnelSyncHealthy))
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "apiserver_proxy_tunnel_sync_latency_secs",
+			Help: "The time since the last successful synchronization of the SSH tunnels for proxy requests.",
+		}, func() float64 { return float64(m.tunneler.SecondsSinceSync()) })
+	}
 
-	podTemplateStorage := podtemplateetcd.NewREST(dbClient("podTemplates"))
+	// TODO(nikhiljindal): Refactor generic parts of support services (like /versions) to genericapiserver.
+	apiserver.InstallSupport(m.MuxHelper, m.RootWebService, healthzChecks...)
+	if c.EnableProfiling {
+		m.MuxHelper.HandleFunc("/resetMetrics", resetMetrics)
+	}
 
-	eventStorage := eventetcd.NewREST(dbClient("events"), uint64(c.EventTTL.Seconds()))
-	limitRangeStorage := limitrangeetcd.NewREST(dbClient("limitRanges"))
+	// Install root web services
+	m.HandlerContainer.Add(m.RootWebService)
 
-	resourceQuotaStorage, resourceQuotaStatusStorage := resourcequotaetcd.NewREST(dbClient("resourceQuotas"))
-	secretStorage := secretetcd.NewREST(dbClient("secrets"))
-	serviceAccountStorage := serviceaccountetcd.NewREST(dbClient("serviceAccounts"))
-	persistentVolumeStorage, persistentVolumeStatusStorage := pvetcd.NewREST(dbClient("persistentVolumes"))
-	persistentVolumeClaimStorage, persistentVolumeClaimStatusStorage := pvcetcd.NewREST(dbClient("persistentVolumeClaims"))
+	// allGroups records all supported groups at /apis
+	allGroups := []unversioned.APIGroup{}
 
-	namespaceStorage, namespaceStatusStorage, namespaceFinalizeStorage := namespaceetcd.NewREST(dbClient("namespaces"))
+	// Install extensions unless disabled.
+	if !m.ApiGroupVersionOverrides["extensions/v1beta1"].Disable {
+		m.thirdPartyStorage = c.StorageDestinations.APIGroups[extensions.GroupName].Default
+		m.thirdPartyResources = map[string]thirdPartyEntry{}
+
+		extensionResources := m.getExtensionResources(c)
+		extensionsGroupMeta := registered.GroupOrDie(extensions.GroupName)
+		// Update the preferred version as per StorageVersions in the config.
+		storageVersion, found := c.StorageVersions[extensionsGroupMeta.GroupVersion.Group]
+		if !found {
+			glog.Fatalf("Couldn't find storage version of group %v", extensionsGroupMeta.GroupVersion.Group)
+		}
+		preferedGroupVersion, err := unversioned.ParseGroupVersion(storageVersion)
+		if err != nil {
+			glog.Fatalf("Error in parsing group version %s: %v", storageVersion, err)
+		}
+		extensionsGroupMeta.GroupVersion = preferedGroupVersion
+
+		apiGroupInfo := genericapiserver.APIGroupInfo{
+			GroupMeta: *extensionsGroupMeta,
+			VersionedResourcesStorageMap: map[string]map[string]rest.Storage{
+				"v1beta1": extensionResources,
+			},
+			OptionsExternalVersion: &registered.GroupOrDie(api.GroupName).GroupVersion,
+			Scheme:                 api.Scheme,
+			ParameterCodec:         api.ParameterCodec,
+			NegotiatedSerializer:   api.Codecs,
+		}
+		apiGroupsInfo = append(apiGroupsInfo, apiGroupInfo)
+
+		extensionsGVForDiscovery := unversioned.GroupVersionForDiscovery{
+			GroupVersion: extensionsGroupMeta.GroupVersion.String(),
+			Version:      extensionsGroupMeta.GroupVersion.Version,
+		}
+		group := unversioned.APIGroup{
+			Name:             extensionsGroupMeta.GroupVersion.Group,
+			Versions:         []unversioned.GroupVersionForDiscovery{extensionsGVForDiscovery},
+			PreferredVersion: extensionsGVForDiscovery,
+		}
+		allGroups = append(allGroups, group)
+	}
+
+	// Install autoscaling unless disabled.
+	if !m.ApiGroupVersionOverrides["autoscaling/v1"].Disable {
+		autoscalingResources := m.getAutoscalingResources(c)
+		autoscalingGroupMeta := registered.GroupOrDie(autoscaling.GroupName)
+
+		// Hard code preferred group version to autoscaling/v1
+		autoscalingGroupMeta.GroupVersion = unversioned.GroupVersion{Group: "autoscaling", Version: "v1"}
+
+		apiGroupInfo := genericapiserver.APIGroupInfo{
+			GroupMeta: *autoscalingGroupMeta,
+			VersionedResourcesStorageMap: map[string]map[string]rest.Storage{
+				"v1": autoscalingResources,
+			},
+			OptionsExternalVersion: &registered.GroupOrDie(api.GroupName).GroupVersion,
+			Scheme:                 api.Scheme,
+			ParameterCodec:         api.ParameterCodec,
+			NegotiatedSerializer:   api.Codecs,
+		}
+		apiGroupsInfo = append(apiGroupsInfo, apiGroupInfo)
+
+		autoscalingGVForDiscovery := unversioned.GroupVersionForDiscovery{
+			GroupVersion: autoscalingGroupMeta.GroupVersion.String(),
+			Version:      autoscalingGroupMeta.GroupVersion.Version,
+		}
+		group := unversioned.APIGroup{
+			Name:             autoscalingGroupMeta.GroupVersion.Group,
+			Versions:         []unversioned.GroupVersionForDiscovery{autoscalingGVForDiscovery},
+			PreferredVersion: autoscalingGVForDiscovery,
+		}
+		allGroups = append(allGroups, group)
+	}
+
+	// Install batch unless disabled.
+	if !m.ApiGroupVersionOverrides["batch/v1"].Disable {
+		batchResources := m.getBatchResources(c)
+		batchGroupMeta := registered.GroupOrDie(batch.GroupName)
+
+		// Hard code preferred group version to batch/v1
+		batchGroupMeta.GroupVersion = unversioned.GroupVersion{Group: "batch", Version: "v1"}
+
+		apiGroupInfo := genericapiserver.APIGroupInfo{
+			GroupMeta: *batchGroupMeta,
+			VersionedResourcesStorageMap: map[string]map[string]rest.Storage{
+				"v1": batchResources,
+			},
+			OptionsExternalVersion: &registered.GroupOrDie(api.GroupName).GroupVersion,
+			Scheme:                 api.Scheme,
+			ParameterCodec:         api.ParameterCodec,
+			NegotiatedSerializer:   api.Codecs,
+		}
+		apiGroupsInfo = append(apiGroupsInfo, apiGroupInfo)
+
+		batchGVForDiscovery := unversioned.GroupVersionForDiscovery{
+			GroupVersion: batchGroupMeta.GroupVersion.String(),
+			Version:      batchGroupMeta.GroupVersion.Version,
+		}
+		group := unversioned.APIGroup{
+			Name:             batchGroupMeta.GroupVersion.Group,
+			Versions:         []unversioned.GroupVersionForDiscovery{batchGVForDiscovery},
+			PreferredVersion: batchGVForDiscovery,
+		}
+		allGroups = append(allGroups, group)
+	}
+
+	if err := m.InstallAPIGroups(apiGroupsInfo); err != nil {
+		glog.Fatalf("Error in registering group versions: %v", err)
+	}
+}
+
+func (m *Master) initV1ResourcesStorage(c *Config) {
+	dbClient := func(resource string) storage.Interface { return c.StorageDestinations.Get("", resource) }
+	restOptions := func(resource string) generic.RESTOptions {
+		return generic.RESTOptions{
+			Storage:                 dbClient(resource),
+			Decorator:               m.StorageDecorator(),
+			DeleteCollectionWorkers: m.deleteCollectionWorkers,
+		}
+	}
+
+	podTemplateStorage := podtemplateetcd.NewREST(restOptions("podTemplates"))
+
+	eventStorage := eventetcd.NewREST(restOptions("events"), uint64(c.EventTTL.Seconds()))
+	limitRangeStorage := limitrangeetcd.NewREST(restOptions("limitRanges"))
+
+	resourceQuotaStorage, resourceQuotaStatusStorage := resourcequotaetcd.NewREST(restOptions("resourceQuotas"))
+	secretStorage := secretetcd.NewREST(restOptions("secrets"))
+	serviceAccountStorage := serviceaccountetcd.NewREST(restOptions("serviceAccounts"))
+	persistentVolumeStorage, persistentVolumeStatusStorage := pvetcd.NewREST(restOptions("persistentVolumes"))
+	persistentVolumeClaimStorage, persistentVolumeClaimStatusStorage := pvcetcd.NewREST(restOptions("persistentVolumeClaims"))
+	configMapStorage := configmapetcd.NewREST(restOptions("configMaps"))
+
+	namespaceStorage, namespaceStatusStorage, namespaceFinalizeStorage := namespaceetcd.NewREST(restOptions("namespaces"))
 	m.namespaceRegistry = namespace.NewRegistry(namespaceStorage)
 
-	endpointsStorage := endpointsetcd.NewREST(dbClient("endpoints"), c.EnableWatchCache)
+	endpointsStorage := endpointsetcd.NewREST(restOptions("endpoints"))
 	m.endpointRegistry = endpoint.NewRegistry(endpointsStorage)
 
-	nodeStorage, nodeStatusStorage := nodeetcd.NewREST(dbClient("nodes"), c.EnableWatchCache, c.KubeletClient)
-	m.nodeRegistry = node.NewRegistry(nodeStorage)
+	nodeStorage := nodeetcd.NewStorage(restOptions("nodes"), c.KubeletClient, m.ProxyTransport)
+	m.nodeRegistry = node.NewRegistry(nodeStorage.Node)
 
-	serviceStorage := serviceetcd.NewREST(dbClient("services"))
+	podStorage := podetcd.NewStorage(
+		restOptions("pods"),
+		kubeletclient.ConnectionInfoGetter(nodeStorage.Node),
+		m.ProxyTransport,
+	)
+
+	serviceStorage, serviceStatusStorage := serviceetcd.NewREST(restOptions("services"))
 	m.serviceRegistry = service.NewRegistry(serviceStorage)
 
 	var serviceClusterIPRegistry service.RangeRegistry
-	serviceClusterIPAllocator := ipallocator.NewAllocatorCIDRRange(m.serviceClusterIPRange, func(max int, rangeSpec string) allocator.Interface {
+	serviceClusterIPRange := m.ServiceClusterIPRange
+	if serviceClusterIPRange == nil {
+		glog.Fatalf("service clusterIPRange is nil")
+		return
+	}
+	serviceClusterIPAllocator := ipallocator.NewAllocatorCIDRRange(serviceClusterIPRange, func(max int, rangeSpec string) allocator.Interface {
 		mem := allocator.NewAllocationMap(max, rangeSpec)
-		etcd := etcdallocator.NewEtcd(mem, "/ranges/serviceips", "serviceipallocation", dbClient("services"))
+		etcd := etcdallocator.NewEtcd(mem, "/ranges/serviceips", api.Resource("serviceipallocations"), dbClient("services"))
 		serviceClusterIPRegistry = etcd
 		return etcd
 	})
 	m.serviceClusterIPAllocator = serviceClusterIPRegistry
 
 	var serviceNodePortRegistry service.RangeRegistry
-	serviceNodePortAllocator := portallocator.NewPortAllocatorCustom(m.serviceNodePortRange, func(max int, rangeSpec string) allocator.Interface {
+	serviceNodePortAllocator := portallocator.NewPortAllocatorCustom(m.ServiceNodePortRange, func(max int, rangeSpec string) allocator.Interface {
 		mem := allocator.NewAllocationMap(max, rangeSpec)
-		etcd := etcdallocator.NewEtcd(mem, "/ranges/servicenodeports", "servicenodeportallocation", dbClient("services"))
+		etcd := etcdallocator.NewEtcd(mem, "/ranges/servicenodeports", api.Resource("servicenodeportallocations"), dbClient("services"))
 		serviceNodePortRegistry = etcd
 		return etcd
 	})
 	m.serviceNodePortAllocator = serviceNodePortRegistry
 
-	controllerStorage, controllerStatusStorage := controlleretcd.NewREST(dbClient("replicationControllers"))
+	controllerStorage := controlleretcd.NewStorage(restOptions("replicationControllers"))
+
+	serviceRest := service.NewStorage(m.serviceRegistry, m.endpointRegistry, serviceClusterIPAllocator, serviceNodePortAllocator, m.ProxyTransport)
 
 	// TODO: Factor out the core API registration
-	m.storage = map[string]rest.Storage{
+	m.v1ResourcesStorage = map[string]rest.Storage{
 		"pods":             podStorage.Pod,
 		"pods/attach":      podStorage.Attach,
 		"pods/status":      podStorage.Status,
@@ -571,13 +412,20 @@ func (m *Master) init(c *Config) {
 
 		"podTemplates": podTemplateStorage,
 
-		"replicationControllers":        controllerStorage,
-		"replicationControllers/status": controllerStatusStorage,
-		"services":                      service.NewStorage(m.serviceRegistry, m.endpointRegistry, serviceClusterIPAllocator, serviceNodePortAllocator),
-		"endpoints":                     endpointsStorage,
-		"nodes":                         nodeStorage,
-		"nodes/status":                  nodeStatusStorage,
-		"events":                        eventStorage,
+		"replicationControllers":        controllerStorage.Controller,
+		"replicationControllers/status": controllerStorage.Status,
+
+		"services":        serviceRest.Service,
+		"services/proxy":  serviceRest.Proxy,
+		"services/status": serviceStatusStorage,
+
+		"endpoints": endpointsStorage,
+
+		"nodes":        nodeStorage.Node,
+		"nodes/status": nodeStorage.Status,
+		"nodes/proxy":  nodeStorage.Proxy,
+
+		"events": eventStorage,
 
 		"limitRanges":                   limitRangeStorage,
 		"resourceQuotas":                resourceQuotaStorage,
@@ -591,187 +439,12 @@ func (m *Master) init(c *Config) {
 		"persistentVolumes/status":      persistentVolumeStatusStorage,
 		"persistentVolumeClaims":        persistentVolumeClaimStorage,
 		"persistentVolumeClaims/status": persistentVolumeClaimStatusStorage,
+		"configMaps":                    configMapStorage,
 
 		"componentStatuses": componentstatus.NewStorage(func() map[string]apiserver.Server { return m.getServersToValidate(c) }),
 	}
-
-	// establish the node proxy dialer
-	if len(c.SSHUser) > 0 {
-		// Usernames are capped @ 32
-		if len(c.SSHUser) > 32 {
-			glog.Warning("SSH User is too long, truncating to 32 chars")
-			c.SSHUser = c.SSHUser[0:32]
-		}
-		glog.Infof("Setting up proxy: %s %s", c.SSHUser, c.SSHKeyfile)
-
-		// public keyfile is written last, so check for that.
-		publicKeyFile := c.SSHKeyfile + ".pub"
-		exists, err := util.FileExists(publicKeyFile)
-		if err != nil {
-			glog.Errorf("Error detecting if key exists: %v", err)
-		} else if !exists {
-			glog.Infof("Key doesn't exist, attempting to create")
-			err := m.generateSSHKey(c.SSHUser, c.SSHKeyfile, publicKeyFile)
-			if err != nil {
-				glog.Errorf("Failed to create key pair: %v", err)
-			}
-		}
-		m.tunnels = &util.SSHTunnelList{}
-		m.dialer = m.Dial
-		m.setupSecureProxy(c.SSHUser, c.SSHKeyfile, publicKeyFile)
-		m.lastSync = m.clock.Now().Unix()
-
-		// This is pretty ugly.  A better solution would be to pull this all the way up into the
-		// server.go file.
-		httpKubeletClient, ok := c.KubeletClient.(*client.HTTPKubeletClient)
-		if ok {
-			httpKubeletClient.Config.Dial = m.dialer
-			transport, err := client.MakeTransport(httpKubeletClient.Config)
-			if err != nil {
-				glog.Errorf("Error setting up transport over SSH: %v", err)
-			} else {
-				httpKubeletClient.Client.Transport = transport
-			}
-		} else {
-			glog.Errorf("Failed to cast %v to HTTPKubeletClient, skipping SSH tunnel.", c.KubeletClient)
-		}
-		healthzChecks = append(healthzChecks, healthz.NamedCheck("SSH Tunnel Check", m.IsTunnelSyncHealthy))
-		m.lastSyncMetric = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-			Name: "apiserver_proxy_tunnel_sync_latency_secs",
-			Help: "The time since the last successful synchronization of the SSH tunnels for proxy requests.",
-		}, func() float64 { return float64(m.secondsSinceSync()) })
-	}
-
-	apiVersions := []string{}
-	// Install v1 unless disabled.
-	if !m.apiGroupVersionOverrides["api/v1"].Disable {
-		if err := m.api_v1().InstallREST(m.handlerContainer); err != nil {
-			glog.Fatalf("Unable to setup API v1: %v", err)
-		}
-		apiVersions = append(apiVersions, "v1")
-	}
-
-	apiserver.InstallSupport(m.muxHelper, m.rootWebService, c.EnableProfiling, healthzChecks...)
-	apiserver.AddApiWebService(m.handlerContainer, c.APIPrefix, apiVersions)
-	defaultVersion := m.defaultAPIGroupVersion()
-	requestInfoResolver := &apiserver.APIRequestInfoResolver{APIPrefixes: sets.NewString(strings.TrimPrefix(defaultVersion.Root, "/")), RestMapper: defaultVersion.Mapper}
-	apiserver.InstallServiceErrorHandler(m.handlerContainer, requestInfoResolver, apiVersions)
-
-	// allGroups records all supported groups at /apis
-	allGroups := []unversioned.APIGroup{}
-	// Install extensions unless disabled.
-	if !m.apiGroupVersionOverrides["extensions/v1beta1"].Disable {
-		m.thirdPartyStorage = c.StorageDestinations.APIGroups["extensions"].Default
-		m.thirdPartyResources = map[string]*thirdpartyresourcedataetcd.REST{}
-
-		expVersion := m.experimental(c)
-
-		if err := expVersion.InstallREST(m.handlerContainer); err != nil {
-			glog.Fatalf("Unable to setup experimental api: %v", err)
-		}
-		g, err := latest.Group("extensions")
-		if err != nil {
-			glog.Fatalf("Unable to setup experimental api: %v", err)
-		}
-		expAPIVersions := []unversioned.GroupVersion{
-			{
-				GroupVersion: expVersion.Version,
-				Version:      apiutil.GetVersion(expVersion.Version),
-			},
-		}
-		storageVersion, found := c.StorageVersions[g.Group]
-		if !found {
-			glog.Fatalf("Couldn't find storage version of group %v", g.Group)
-		}
-		group := unversioned.APIGroup{
-			Name:             g.Group,
-			Versions:         expAPIVersions,
-			PreferredVersion: unversioned.GroupVersion{GroupVersion: storageVersion, Version: apiutil.GetVersion(storageVersion)},
-		}
-		apiserver.AddGroupWebService(m.handlerContainer, c.APIGroupPrefix+"/"+latest.GroupOrDie("extensions").Group, group)
-		allGroups = append(allGroups, group)
-		expRequestInfoResolver := &apiserver.APIRequestInfoResolver{APIPrefixes: sets.NewString(strings.TrimPrefix(expVersion.Root, "/")), RestMapper: expVersion.Mapper}
-		apiserver.InstallServiceErrorHandler(m.handlerContainer, expRequestInfoResolver, []string{expVersion.Version})
-	}
-
-	// This should be done after all groups are registered
-	// TODO: replace the hardcoded "apis".
-	apiserver.AddApisWebService(m.handlerContainer, "/apis", allGroups)
-
-	// Register root handler.
-	// We do not register this using restful Webservice since we do not want to surface this in api docs.
-	// Allow master to be embedded in contexts which already have something registered at the root
-	if c.EnableIndex {
-		m.mux.HandleFunc("/", apiserver.IndexHandler(m.handlerContainer, m.muxHelper))
-	}
-
-	if c.EnableLogsSupport {
-		apiserver.InstallLogsSupport(m.muxHelper)
-	}
-	if c.EnableUISupport {
-		ui.InstallSupport(m.muxHelper, m.enableSwaggerSupport)
-	}
-
-	if c.EnableProfiling {
-		m.mux.HandleFunc("/debug/pprof/", pprof.Index)
-		m.mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-		m.mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	}
-
-	handler := http.Handler(m.mux.(*http.ServeMux))
-
-	// TODO: handle CORS and auth using go-restful
-	// See github.com/emicklei/go-restful/blob/master/examples/restful-CORS-filter.go, and
-	// github.com/emicklei/go-restful/blob/master/examples/restful-basic-authentication.go
-
-	if len(c.CorsAllowedOriginList) > 0 {
-		allowedOriginRegexps, err := util.CompileRegexps(c.CorsAllowedOriginList)
-		if err != nil {
-			glog.Fatalf("Invalid CORS allowed origin, --cors-allowed-origins flag was set to %v - %v", strings.Join(c.CorsAllowedOriginList, ","), err)
-		}
-		handler = apiserver.CORS(handler, allowedOriginRegexps, nil, nil, "true")
-	}
-
-	m.InsecureHandler = handler
-
-	attributeGetter := apiserver.NewRequestAttributeGetter(m.requestContextMapper, latest.GroupOrDie("").RESTMapper, "api")
-	handler = apiserver.WithAuthorizationCheck(handler, attributeGetter, m.authorizer)
-
-	// Install Authenticator
-	if c.Authenticator != nil {
-		authenticatedHandler, err := handlers.NewRequestAuthenticator(m.requestContextMapper, c.Authenticator, handlers.Unauthorized(c.SupportsBasicAuth), handler)
-		if err != nil {
-			glog.Fatalf("Could not initialize authenticator: %v", err)
-		}
-		handler = authenticatedHandler
-	}
-
-	// Install root web services
-	m.handlerContainer.Add(m.rootWebService)
-
-	// TODO: Make this optional?  Consumers of master depend on this currently.
-	m.Handler = handler
-
-	if m.enableSwaggerSupport {
-		m.InstallSwaggerAPI()
-	}
-
-	// After all wrapping is done, put a context filter around both handlers
-	if handler, err := api.NewRequestContextFilter(m.requestContextMapper, m.Handler); err != nil {
-		glog.Fatalf("Could not initialize request context filter: %v", err)
-	} else {
-		m.Handler = handler
-	}
-
-	if handler, err := api.NewRequestContextFilter(m.requestContextMapper, m.InsecureHandler); err != nil {
-		glog.Fatalf("Could not initialize request context filter: %v", err)
-	} else {
-		m.InsecureHandler = handler
-	}
-
-	// TODO: Attempt clean shutdown?
-	if m.enableCoreControllers {
-		m.NewBootstrapController().Start()
+	if registered.IsEnabledVersion(unversioned.GroupVersion{Group: "autoscaling", Version: "v1"}) {
+		m.v1ResourcesStorage["replicationControllers/scale"] = controllerStorage.Scale
 	}
 }
 
@@ -780,54 +453,28 @@ func (m *Master) NewBootstrapController() *Controller {
 	return &Controller{
 		NamespaceRegistry: m.namespaceRegistry,
 		ServiceRegistry:   m.serviceRegistry,
-		MasterCount:       m.masterCount,
+		MasterCount:       m.MasterCount,
 
 		EndpointRegistry: m.endpointRegistry,
 		EndpointInterval: 10 * time.Second,
 
 		ServiceClusterIPRegistry: m.serviceClusterIPAllocator,
-		ServiceClusterIPRange:    m.serviceClusterIPRange,
+		ServiceClusterIPRange:    m.ServiceClusterIPRange,
 		ServiceClusterIPInterval: 3 * time.Minute,
 
 		ServiceNodePortRegistry: m.serviceNodePortAllocator,
-		ServiceNodePortRange:    m.serviceNodePortRange,
+		ServiceNodePortRange:    m.ServiceNodePortRange,
 		ServiceNodePortInterval: 3 * time.Minute,
 
-		PublicIP: m.clusterIP,
+		PublicIP: m.ClusterIP,
 
-		ServiceIP:         m.serviceReadWriteIP,
-		ServicePort:       m.serviceReadWritePort,
-		PublicServicePort: m.publicReadWritePort,
+		ServiceIP:                 m.ServiceReadWriteIP,
+		ServicePort:               m.ServiceReadWritePort,
+		ExtraServicePorts:         m.ExtraServicePorts,
+		ExtraEndpointPorts:        m.ExtraEndpointPorts,
+		PublicServicePort:         m.PublicReadWritePort,
+		KubernetesServiceNodePort: m.KubernetesServiceNodePort,
 	}
-}
-
-// InstallSwaggerAPI installs the /swaggerapi/ endpoint to allow schema discovery
-// and traversal.  It is optional to allow consumers of the Kubernetes master to
-// register their own web services into the Kubernetes mux prior to initialization
-// of swagger, so that other resource types show up in the documentation.
-func (m *Master) InstallSwaggerAPI() {
-	hostAndPort := m.externalHost
-	protocol := "https://"
-
-	// TODO: this is kind of messed up, we should just pipe in the full URL from the outside, rather
-	// than guessing at it.
-	if len(m.externalHost) == 0 && m.clusterIP != nil {
-		host := m.clusterIP.String()
-		if m.publicReadWritePort != 0 {
-			hostAndPort = net.JoinHostPort(host, strconv.Itoa(m.publicReadWritePort))
-		}
-	}
-	webServicesUrl := protocol + hostAndPort
-
-	// Enable swagger UI and discovery API
-	swaggerConfig := swagger.Config{
-		WebServicesUrl:  webServicesUrl,
-		WebServices:     m.handlerContainer.RegisteredWebServices(),
-		ApiPath:         "/swaggerapi/",
-		SwaggerPath:     "/swaggerui/",
-		SwaggerFilePath: "/swagger-ui/",
-	}
-	swagger.RegisterSwaggerService(swaggerConfig, m.handlerContainer)
 }
 
 func (m *Master) getServersToValidate(c *Config) map[string]apiserver.Server {
@@ -836,7 +483,7 @@ func (m *Master) getServersToValidate(c *Config) map[string]apiserver.Server {
 		"scheduler":          {Addr: "127.0.0.1", Port: ports.SchedulerPort, Path: "/healthz"},
 	}
 
-	for ix, machine := range c.StorageDestinations.backends() {
+	for ix, machine := range c.StorageDestinations.Backends() {
 		etcdUrl, err := url.Parse(machine)
 		if err != nil {
 			glog.Errorf("Failed to parse etcd url for validation: %v", err)
@@ -856,51 +503,20 @@ func (m *Master) getServersToValidate(c *Config) map[string]apiserver.Server {
 			addr = etcdUrl.Host
 			port = 4001
 		}
-		serversToValidate[fmt.Sprintf("etcd-%d", ix)] = apiserver.Server{Addr: addr, Port: port, Path: "/health", Validate: etcdstorage.EtcdHealthCheck}
+		// TODO: etcd health checking should be abstracted in the storage tier
+		serversToValidate[fmt.Sprintf("etcd-%d", ix)] = apiserver.Server{Addr: addr, Port: port, Path: "/health", Validate: etcdutil.EtcdHealthCheck}
 	}
 	return serversToValidate
 }
 
-func (m *Master) defaultAPIGroupVersion() *apiserver.APIGroupVersion {
-	return &apiserver.APIGroupVersion{
-		Root: m.apiPrefix,
-
-		Mapper: latest.GroupOrDie("").RESTMapper,
-
-		Creater:   api.Scheme,
-		Convertor: api.Scheme,
-		Typer:     api.Scheme,
-		Linker:    latest.GroupOrDie("").SelfLinker,
-
-		Admit:   m.admissionControl,
-		Context: m.requestContextMapper,
-
-		ProxyDialerFn:     m.dialer,
-		MinRequestTimeout: m.minRequestTimeout,
-	}
-}
-
-// api_v1 returns the resources and codec for API version v1.
-func (m *Master) api_v1() *apiserver.APIGroupVersion {
-	storage := make(map[string]rest.Storage)
-	for k, v := range m.storage {
-		storage[strings.ToLower(k)] = v
-	}
-	version := m.defaultAPIGroupVersion()
-	version.Storage = storage
-	version.Version = "v1"
-	version.Codec = v1.Codec
-	return version
-}
-
 // HasThirdPartyResource returns true if a particular third party resource currently installed.
-func (m *Master) HasThirdPartyResource(rsrc *expapi.ThirdPartyResource) (bool, error) {
+func (m *Master) HasThirdPartyResource(rsrc *extensions.ThirdPartyResource) (bool, error) {
 	_, group, err := thirdpartyresourcedata.ExtractApiGroupAndKind(rsrc)
 	if err != nil {
 		return false, err
 	}
 	path := makeThirdPartyPath(group)
-	services := m.handlerContainer.RegisteredWebServices()
+	services := m.HandlerContainer.RegisteredWebServices()
 	for ix := range services {
 		if services[ix].RootPath() == path {
 			return true, nil
@@ -914,10 +530,11 @@ func (m *Master) removeThirdPartyStorage(path string) error {
 	defer m.thirdPartyResourcesLock.Unlock()
 	storage, found := m.thirdPartyResources[path]
 	if found {
-		if err := m.removeAllThirdPartyResources(storage); err != nil {
+		if err := m.removeAllThirdPartyResources(storage.storage); err != nil {
 			return err
 		}
 		delete(m.thirdPartyResources, path)
+		m.RemoveAPIGroupForDiscovery(getThirdPartyGroupName(path))
 	}
 	return nil
 }
@@ -928,11 +545,11 @@ func (m *Master) RemoveThirdPartyResource(path string) error {
 		return err
 	}
 
-	services := m.handlerContainer.RegisteredWebServices()
+	services := m.HandlerContainer.RegisteredWebServices()
 	for ix := range services {
 		root := services[ix].RootPath()
 		if root == path || strings.HasPrefix(root, path+"/") {
-			m.handlerContainer.Remove(services[ix])
+			m.HandlerContainer.Remove(services[ix])
 		}
 	}
 	return nil
@@ -940,11 +557,11 @@ func (m *Master) RemoveThirdPartyResource(path string) error {
 
 func (m *Master) removeAllThirdPartyResources(registry *thirdpartyresourcedataetcd.REST) error {
 	ctx := api.NewDefaultContext()
-	existingData, err := registry.List(ctx, labels.Everything(), fields.Everything())
+	existingData, err := registry.List(ctx, nil)
 	if err != nil {
 		return err
 	}
-	list, ok := existingData.(*expapi.ThirdPartyResourceDataList)
+	list, ok := existingData.(*extensions.ThirdPartyResourceDataList)
 	if !ok {
 		return fmt.Errorf("expected a *ThirdPartyResourceDataList, got %#v", list)
 	}
@@ -968,10 +585,11 @@ func (m *Master) ListThirdPartyResources() []string {
 	return result
 }
 
-func (m *Master) addThirdPartyResourceStorage(path string, storage *thirdpartyresourcedataetcd.REST) {
+func (m *Master) addThirdPartyResourceStorage(path string, storage *thirdpartyresourcedataetcd.REST, apiGroup unversioned.APIGroup) {
 	m.thirdPartyResourcesLock.Lock()
 	defer m.thirdPartyResourcesLock.Unlock()
-	m.thirdPartyResources[path] = storage
+	m.thirdPartyResources[path] = thirdPartyEntry{storage, apiGroup}
+	m.AddAPIGroupForDiscovery(apiGroup)
 }
 
 // InstallThirdPartyResource installs a third party resource specified by 'rsrc'.  When a resource is
@@ -981,33 +599,33 @@ func (m *Master) addThirdPartyResourceStorage(path string, storage *thirdpartyre
 // For example, if you install a resource ThirdPartyResource{ Name: "foo.company.com", Versions: {"v1"} }
 // then the following RESTful resource is created on the server:
 //   http://<host>/apis/company.com/v1/foos/...
-func (m *Master) InstallThirdPartyResource(rsrc *expapi.ThirdPartyResource) error {
+func (m *Master) InstallThirdPartyResource(rsrc *extensions.ThirdPartyResource) error {
 	kind, group, err := thirdpartyresourcedata.ExtractApiGroupAndKind(rsrc)
 	if err != nil {
 		return err
 	}
 	thirdparty := m.thirdpartyapi(group, kind, rsrc.Versions[0].Name)
-	if err := thirdparty.InstallREST(m.handlerContainer); err != nil {
+	if err := thirdparty.InstallREST(m.HandlerContainer); err != nil {
 		glog.Fatalf("Unable to setup thirdparty api: %v", err)
 	}
 	path := makeThirdPartyPath(group)
-	groupVersion := unversioned.GroupVersion{
+	groupVersion := unversioned.GroupVersionForDiscovery{
 		GroupVersion: group + "/" + rsrc.Versions[0].Name,
 		Version:      rsrc.Versions[0].Name,
 	}
 	apiGroup := unversioned.APIGroup{
 		Name:     group,
-		Versions: []unversioned.GroupVersion{groupVersion},
+		Versions: []unversioned.GroupVersionForDiscovery{groupVersion},
 	}
-	apiserver.AddGroupWebService(m.handlerContainer, path, apiGroup)
-	m.addThirdPartyResourceStorage(path, thirdparty.Storage[strings.ToLower(kind)+"s"].(*thirdpartyresourcedataetcd.REST))
-	thirdPartyRequestInfoResolver := &apiserver.APIRequestInfoResolver{APIPrefixes: sets.NewString(strings.TrimPrefix(group, "/")), RestMapper: thirdparty.Mapper}
-	apiserver.InstallServiceErrorHandler(m.handlerContainer, thirdPartyRequestInfoResolver, []string{thirdparty.Version})
+	apiserver.AddGroupWebService(api.Codecs, m.HandlerContainer, path, apiGroup)
+	m.addThirdPartyResourceStorage(path, thirdparty.Storage[strings.ToLower(kind)+"s"].(*thirdpartyresourcedataetcd.REST), apiGroup)
+	apiserver.InstallServiceErrorHandler(api.Codecs, m.HandlerContainer, m.NewRequestInfoResolver(), []string{thirdparty.GroupVersion.String()})
 	return nil
 }
 
 func (m *Master) thirdpartyapi(group, kind, version string) *apiserver.APIGroupVersion {
-	resourceStorage := thirdpartyresourcedataetcd.NewREST(m.thirdPartyStorage, group, kind)
+	resourceStorage := thirdpartyresourcedataetcd.NewREST(
+		generic.RESTOptions{m.thirdPartyStorage, generic.UndecoratedStorage, m.deleteCollectionWorkers}, group, kind)
 
 	apiRoot := makeThirdPartyPath("")
 
@@ -1015,32 +633,38 @@ func (m *Master) thirdpartyapi(group, kind, version string) *apiserver.APIGroupV
 		strings.ToLower(kind) + "s": resourceStorage,
 	}
 
+	optionsExternalVersion := registered.GroupOrDie(api.GroupName).GroupVersion
+	internalVersion := unversioned.GroupVersion{Group: group, Version: runtime.APIVersionInternal}
+	externalVersion := unversioned.GroupVersion{Group: group, Version: version}
+
 	return &apiserver.APIGroupVersion{
-		Root:    apiRoot,
-		Version: apiutil.GetGroupVersion(group, version),
+		Root:                apiRoot,
+		GroupVersion:        externalVersion,
+		RequestInfoResolver: m.NewRequestInfoResolver(),
 
 		Creater:   thirdpartyresourcedata.NewObjectCreator(group, version, api.Scheme),
 		Convertor: api.Scheme,
 		Typer:     api.Scheme,
 
-		Mapper:        thirdpartyresourcedata.NewMapper(latest.GroupOrDie("extensions").RESTMapper, kind, version, group),
-		Codec:         thirdpartyresourcedata.NewCodec(latest.GroupOrDie("extensions").Codec, kind),
-		Linker:        latest.GroupOrDie("extensions").SelfLinker,
-		Storage:       storage,
-		ServerVersion: latest.GroupOrDie("").GroupVersion,
+		Mapper:                 thirdpartyresourcedata.NewMapper(registered.GroupOrDie(extensions.GroupName).RESTMapper, kind, version, group),
+		Linker:                 registered.GroupOrDie(extensions.GroupName).SelfLinker,
+		Storage:                storage,
+		OptionsExternalVersion: &optionsExternalVersion,
 
-		Context: m.requestContextMapper,
+		Serializer:     thirdpartyresourcedata.NewNegotiatedSerializer(api.Codecs, kind, externalVersion, internalVersion),
+		ParameterCodec: thirdpartyresourcedata.NewThirdPartyParameterCodec(api.ParameterCodec),
 
-		ProxyDialerFn:     m.dialer,
-		MinRequestTimeout: m.minRequestTimeout,
+		Context: m.RequestContextMapper,
+
+		MinRequestTimeout: m.MinRequestTimeout,
 	}
 }
 
-// experimental returns the resources and codec for the experimental api
-func (m *Master) experimental(c *Config) *apiserver.APIGroupVersion {
+// getExperimentalResources returns the resources for extensions api
+func (m *Master) getExtensionResources(c *Config) map[string]rest.Storage {
 	// All resources except these are disabled by default.
-	enabledResources := utilSets.NewString("jobs", "horizontalpodautoscalers", "ingresses")
-	resourceOverrides := m.apiGroupVersionOverrides["extensions/v1beta1"].ResourceOverrides
+	enabledResources := sets.NewString("daemonsets", "deployments", "horizontalpodautoscalers", "ingresses", "jobs", "replicasets")
+	resourceOverrides := m.ApiGroupVersionOverrides["extensions/v1beta1"].ResourceOverrides
 	isEnabled := func(resource string) bool {
 		// Check if the resource has been overriden.
 		enabled, ok := resourceOverrides[resource]
@@ -1049,27 +673,31 @@ func (m *Master) experimental(c *Config) *apiserver.APIGroupVersion {
 		}
 		return enabled
 	}
-	dbClient := func(resource string) storage.Interface {
-		return c.StorageDestinations.get("extensions", resource)
+	restOptions := func(resource string) generic.RESTOptions {
+		return generic.RESTOptions{
+			Storage:                 c.StorageDestinations.Get(extensions.GroupName, resource),
+			Decorator:               m.StorageDecorator(),
+			DeleteCollectionWorkers: m.deleteCollectionWorkers,
+		}
 	}
 
 	storage := map[string]rest.Storage{}
+
 	if isEnabled("horizontalpodautoscalers") {
-		autoscalerStorage, autoscalerStatusStorage := horizontalpodautoscaleretcd.NewREST(dbClient("horizonalpodautoscalers"))
-		storage["horizontalpodautoscalers"] = autoscalerStorage
-		storage["horizontalpodautoscalers/status"] = autoscalerStatusStorage
-		controllerStorage := expcontrolleretcd.NewStorage(c.StorageDestinations.get("", "replicationControllers"))
+		m.constructHPAResources(c, storage)
+		controllerStorage := expcontrolleretcd.NewStorage(
+			generic.RESTOptions{c.StorageDestinations.Get("", "replicationControllers"), m.StorageDecorator(), m.deleteCollectionWorkers})
 		storage["replicationcontrollers"] = controllerStorage.ReplicationController
 		storage["replicationcontrollers/scale"] = controllerStorage.Scale
 	}
 	if isEnabled("thirdpartyresources") {
-		thirdPartyResourceStorage := thirdpartyresourceetcd.NewREST(dbClient("thirdpartyresources"))
+		thirdPartyResourceStorage := thirdpartyresourceetcd.NewREST(restOptions("thirdpartyresources"))
 		thirdPartyControl := ThirdPartyController{
 			master: m,
 			thirdPartyResourceRegistry: thirdPartyResourceStorage,
 		}
 		go func() {
-			util.Forever(func() {
+			wait.Forever(func() {
 				if err := thirdPartyControl.SyncResources(); err != nil {
 					glog.Warningf("third party resource sync failed: %v", err)
 				}
@@ -1080,48 +708,111 @@ func (m *Master) experimental(c *Config) *apiserver.APIGroupVersion {
 	}
 
 	if isEnabled("daemonsets") {
-		daemonSetStorage, daemonSetStatusStorage := daemonetcd.NewREST(dbClient("daemonsets"))
+		daemonSetStorage, daemonSetStatusStorage := daemonetcd.NewREST(restOptions("daemonsets"))
 		storage["daemonsets"] = daemonSetStorage
 		storage["daemonsets/status"] = daemonSetStatusStorage
 	}
 	if isEnabled("deployments") {
-		deploymentStorage := deploymentetcd.NewStorage(dbClient("deployments"))
+		deploymentStorage := deploymentetcd.NewStorage(restOptions("deployments"))
 		storage["deployments"] = deploymentStorage.Deployment
+		storage["deployments/status"] = deploymentStorage.Status
+		storage["deployments/rollback"] = deploymentStorage.Rollback
 		storage["deployments/scale"] = deploymentStorage.Scale
 	}
 	if isEnabled("jobs") {
-		jobStorage, jobStatusStorage := jobetcd.NewREST(dbClient("jobs"))
-		storage["jobs"] = jobStorage
-		storage["jobs/status"] = jobStatusStorage
+		m.constructJobResources(c, storage)
 	}
 	if isEnabled("ingresses") {
-		ingressStorage, ingressStatusStorage := ingressetcd.NewREST(dbClient("ingresses"))
+		ingressStorage, ingressStatusStorage := ingressetcd.NewREST(restOptions("ingresses"))
 		storage["ingresses"] = ingressStorage
 		storage["ingresses/status"] = ingressStatusStorage
 	}
-
-	extensionsGroup := latest.GroupOrDie("extensions")
-
-	return &apiserver.APIGroupVersion{
-		Root: m.apiGroupPrefix,
-
-		Creater:   api.Scheme,
-		Convertor: api.Scheme,
-		Typer:     api.Scheme,
-
-		Mapper:        extensionsGroup.RESTMapper,
-		Codec:         extensionsGroup.Codec,
-		Linker:        extensionsGroup.SelfLinker,
-		Storage:       storage,
-		Version:       extensionsGroup.GroupVersion,
-		ServerVersion: latest.GroupOrDie("").GroupVersion,
-
-		Admit:   m.admissionControl,
-		Context: m.requestContextMapper,
-
-		ProxyDialerFn:     m.dialer,
-		MinRequestTimeout: m.minRequestTimeout,
+	if isEnabled("podsecuritypolicy") {
+		podSecurityPolicyStorage := pspetcd.NewREST(restOptions("podsecuritypolicy"))
+		storage["podSecurityPolicies"] = podSecurityPolicyStorage
 	}
+	if isEnabled("replicasets") {
+		replicaSetStorage := replicasetetcd.NewStorage(restOptions("replicasets"))
+		storage["replicasets"] = replicaSetStorage.ReplicaSet
+		storage["replicasets/status"] = replicaSetStorage.Status
+		storage["replicasets/scale"] = replicaSetStorage.Scale
+	}
+
+	return storage
+}
+
+// constructHPAResources makes HPA resources and adds them to the storage map.
+// They're installed in both autoscaling and extensions. It's assumed that
+// you've already done the check that they should be on.
+func (m *Master) constructHPAResources(c *Config, restStorage map[string]rest.Storage) {
+	// Note that hpa's storage settings are changed by changing the autoscaling
+	// group. Clearly we want all hpas to be stored in the same place no
+	// matter where they're accessed from.
+	restOptions := func(resource string) generic.RESTOptions {
+		return generic.RESTOptions{
+			Storage:                 c.StorageDestinations.Search([]string{autoscaling.GroupName, extensions.GroupName}, resource),
+			Decorator:               m.StorageDecorator(),
+			DeleteCollectionWorkers: m.deleteCollectionWorkers,
+		}
+	}
+	autoscalerStorage, autoscalerStatusStorage := horizontalpodautoscaleretcd.NewREST(restOptions("horizontalpodautoscalers"))
+	restStorage["horizontalpodautoscalers"] = autoscalerStorage
+	restStorage["horizontalpodautoscalers/status"] = autoscalerStatusStorage
+}
+
+// getAutoscalingResources returns the resources for autoscaling api
+func (m *Master) getAutoscalingResources(c *Config) map[string]rest.Storage {
+	resourceOverrides := m.ApiGroupVersionOverrides["autoscaling/v1"].ResourceOverrides
+	isEnabled := func(resource string) bool {
+		// Check if the resource has been overriden.
+		if enabled, ok := resourceOverrides[resource]; ok {
+			return enabled
+		}
+		return !m.ApiGroupVersionOverrides["autoscaling/v1"].Disable
+	}
+
+	storage := map[string]rest.Storage{}
+	if isEnabled("horizontalpodautoscalers") {
+		m.constructHPAResources(c, storage)
+	}
+	return storage
+}
+
+// constructJobResources makes Job resources and adds them to the storage map.
+// They're installed in both batch and extensions. It's assumed that you've
+// already done the check that they should be on.
+func (m *Master) constructJobResources(c *Config, restStorage map[string]rest.Storage) {
+	// Note that job's storage settings are changed by changing the batch
+	// group. Clearly we want all jobs to be stored in the same place no
+	// matter where they're accessed from.
+	restOptions := func(resource string) generic.RESTOptions {
+		return generic.RESTOptions{
+			Storage:                 c.StorageDestinations.Search([]string{batch.GroupName, extensions.GroupName}, resource),
+			Decorator:               m.StorageDecorator(),
+			DeleteCollectionWorkers: m.deleteCollectionWorkers,
+		}
+	}
+	jobStorage, jobStatusStorage := jobetcd.NewREST(restOptions("jobs"))
+	restStorage["jobs"] = jobStorage
+	restStorage["jobs/status"] = jobStatusStorage
+}
+
+// getBatchResources returns the resources for batch api
+func (m *Master) getBatchResources(c *Config) map[string]rest.Storage {
+	resourceOverrides := m.ApiGroupVersionOverrides["batch/v1"].ResourceOverrides
+	isEnabled := func(resource string) bool {
+		// Check if the resource has been overriden.
+		if enabled, ok := resourceOverrides[resource]; ok {
+			return enabled
+		}
+		return !m.ApiGroupVersionOverrides["batch/v1"].Disable
+	}
+
+	storage := map[string]rest.Storage{}
+	if isEnabled("jobs") {
+		m.constructJobResources(c, storage)
+	}
+	return storage
 }
 
 // findExternalAddress returns ExternalIP of provided node with fallback to LegacyHostIP.
@@ -1142,43 +833,8 @@ func findExternalAddress(node *api.Node) (string, error) {
 	return "", fmt.Errorf("Couldn't find external address: %v", node)
 }
 
-func (m *Master) Dial(net, addr string) (net.Conn, error) {
-	// Only lock while picking a tunnel.
-	tunnel, err := func() (util.SSHTunnelEntry, error) {
-		m.tunnelsLock.Lock()
-		defer m.tunnelsLock.Unlock()
-		return m.tunnels.PickRandomTunnel()
-	}()
-	if err != nil {
-		return nil, err
-	}
-
-	start := time.Now()
-	id := rand.Int63() // So you can match begins/ends in the log.
-	glog.V(3).Infof("[%x: %v] Dialing...", id, tunnel.Address)
-	defer func() {
-		glog.V(3).Infof("[%x: %v] Dialed in %v.", id, tunnel.Address, time.Now().Sub(start))
-	}()
-	return tunnel.Tunnel.Dial(net, addr)
-}
-
-func (m *Master) needToReplaceTunnels(addrs []string) bool {
-	m.tunnelsLock.Lock()
-	defer m.tunnelsLock.Unlock()
-	if m.tunnels == nil || m.tunnels.Len() != len(addrs) {
-		return true
-	}
-	// TODO (cjcullen): This doesn't need to be n^2
-	for ix := range addrs {
-		if !m.tunnels.Has(addrs[ix]) {
-			return true
-		}
-	}
-	return false
-}
-
 func (m *Master) getNodeAddresses() ([]string, error) {
-	nodes, err := m.nodeRegistry.ListNodes(api.NewDefaultContext(), labels.Everything(), fields.Everything())
+	nodes, err := m.nodeRegistry.ListNodes(api.NewDefaultContext(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1195,126 +851,16 @@ func (m *Master) getNodeAddresses() ([]string, error) {
 }
 
 func (m *Master) IsTunnelSyncHealthy(req *http.Request) error {
-	lag := m.secondsSinceSync()
+	if m.tunneler == nil {
+		return nil
+	}
+	lag := m.tunneler.SecondsSinceSync()
 	if lag > 600 {
 		return fmt.Errorf("Tunnel sync is taking to long: %d", lag)
 	}
+	sshKeyLag := m.tunneler.SecondsSinceSSHKeySync()
+	if sshKeyLag > 600 {
+		return fmt.Errorf("SSHKey sync is taking to long: %d", sshKeyLag)
+	}
 	return nil
-}
-
-func (m *Master) secondsSinceSync() int64 {
-	now := m.clock.Now().Unix()
-	then := atomic.LoadInt64(&m.lastSync)
-	return now - then
-}
-
-func (m *Master) replaceTunnels(user, keyfile string, newAddrs []string) error {
-	glog.Infof("replacing tunnels. New addrs: %v", newAddrs)
-	tunnels := util.MakeSSHTunnels(user, keyfile, newAddrs)
-	if err := tunnels.Open(); err != nil {
-		return err
-	}
-	m.tunnelsLock.Lock()
-	defer m.tunnelsLock.Unlock()
-	if m.tunnels != nil {
-		m.tunnels.Close()
-	}
-	m.tunnels = tunnels
-	atomic.StoreInt64(&m.lastSync, m.clock.Now().Unix())
-	return nil
-}
-
-func (m *Master) loadTunnels(user, keyfile string) error {
-	addrs, err := m.getNodeAddresses()
-	if err != nil {
-		return err
-	}
-	if !m.needToReplaceTunnels(addrs) {
-		return nil
-	}
-	// TODO: This is going to unnecessarily close connections to unchanged nodes.
-	// See comment about using Watch above.
-	glog.Info("found different nodes. Need to replace tunnels")
-	return m.replaceTunnels(user, keyfile, addrs)
-}
-
-func (m *Master) refreshTunnels(user, keyfile string) error {
-	addrs, err := m.getNodeAddresses()
-	if err != nil {
-		return err
-	}
-	return m.replaceTunnels(user, keyfile, addrs)
-}
-
-func (m *Master) setupSecureProxy(user, privateKeyfile, publicKeyfile string) {
-	// Sync loop to ensure that the SSH key has been installed.
-	go util.Until(func() {
-		if m.installSSHKey == nil {
-			glog.Error("Won't attempt to install ssh key: installSSHKey function is nil")
-			return
-		}
-		key, err := util.ParsePublicKeyFromFile(publicKeyfile)
-		if err != nil {
-			glog.Errorf("Failed to load public key: %v", err)
-			return
-		}
-		keyData, err := util.EncodeSSHKey(key)
-		if err != nil {
-			glog.Errorf("Failed to encode public key: %v", err)
-			return
-		}
-		if err := m.installSSHKey(user, keyData); err != nil {
-			glog.Errorf("Failed to install ssh key: %v", err)
-		}
-	}, 5*time.Minute, util.NeverStop)
-	// Sync loop for tunnels
-	// TODO: switch this to watch.
-	go util.Until(func() {
-		if err := m.loadTunnels(user, privateKeyfile); err != nil {
-			glog.Errorf("Failed to load SSH Tunnels: %v", err)
-		}
-		if m.tunnels != nil && m.tunnels.Len() != 0 {
-			// Sleep for 10 seconds if we have some tunnels.
-			// TODO (cjcullen): tunnels can lag behind actually existing nodes.
-			time.Sleep(9 * time.Second)
-		}
-	}, 1*time.Second, util.NeverStop)
-	// Refresh loop for tunnels
-	// TODO: could make this more controller-ish
-	go util.Until(func() {
-		time.Sleep(5 * time.Minute)
-		if err := m.refreshTunnels(user, privateKeyfile); err != nil {
-			glog.Errorf("Failed to refresh SSH Tunnels: %v", err)
-		}
-	}, 0*time.Second, util.NeverStop)
-}
-
-func (m *Master) generateSSHKey(user, privateKeyfile, publicKeyfile string) error {
-	// TODO: user is not used. Consider removing it as an input to the function.
-	private, public, err := util.GenerateKey(2048)
-	if err != nil {
-		return err
-	}
-	// If private keyfile already exists, we must have only made it halfway
-	// through last time, so delete it.
-	exists, err := util.FileExists(privateKeyfile)
-	if err != nil {
-		glog.Errorf("Error detecting if private key exists: %v", err)
-	} else if exists {
-		glog.Infof("Private key exists, but public key does not")
-		if err := os.Remove(privateKeyfile); err != nil {
-			glog.Errorf("Failed to remove stale private key: %v", err)
-		}
-	}
-	if err := ioutil.WriteFile(privateKeyfile, util.EncodePrivateKey(private), 0600); err != nil {
-		return err
-	}
-	publicKeyBytes, err := util.EncodePublicKey(public)
-	if err != nil {
-		return err
-	}
-	if err := ioutil.WriteFile(publicKeyfile+".tmp", publicKeyBytes, 0600); err != nil {
-		return err
-	}
-	return os.Rename(publicKeyfile+".tmp", publicKeyfile)
 }

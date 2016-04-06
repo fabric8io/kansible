@@ -20,16 +20,16 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 
 	"k8s.io/kubernetes/pkg/api/meta"
+	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/api/validation"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util/errors"
+	utilerrors "k8s.io/kubernetes/pkg/util/errors"
 	"k8s.io/kubernetes/pkg/util/yaml"
 	"k8s.io/kubernetes/pkg/watch"
 )
@@ -85,15 +85,18 @@ type Info struct {
 	// but if set it should be equal to or newer than the resource version of the
 	// object (however the server defines resource version).
 	ResourceVersion string
+	// Optional, should this resource be exported, stripped of cluster-specific and instance specific fields
+	Export bool
 }
 
 // NewInfo returns a new info object
-func NewInfo(client RESTClient, mapping *meta.RESTMapping, namespace, name string) *Info {
+func NewInfo(client RESTClient, mapping *meta.RESTMapping, namespace, name string, export bool) *Info {
 	return &Info{
 		Client:    client,
 		Mapping:   mapping,
 		Namespace: namespace,
 		Name:      name,
+		Export:    export,
 	}
 }
 
@@ -103,8 +106,8 @@ func (i *Info) Visit(fn VisitorFunc) error {
 }
 
 // Get retrieves the object from the Namespace and Name fields
-func (i *Info) Get() error {
-	obj, err := NewHelper(i.Client, i.Mapping).Get(i.Namespace, i.Name)
+func (i *Info) Get() (err error) {
+	obj, err := NewHelper(i.Client, i.Mapping).Get(i.Namespace, i.Name, i.Export)
 	if err != nil {
 		return err
 	}
@@ -196,7 +199,7 @@ func (l EagerVisitorList) Visit(fn VisitorFunc) error {
 			errs = append(errs, err)
 		}
 	}
-	return errors.NewAggregate(errs)
+	return utilerrors.NewAggregate(errs)
 }
 
 func ValidateSchema(data []byte, schema validation.Schema) error {
@@ -216,9 +219,8 @@ func ValidateSchema(data []byte, schema validation.Schema) error {
 // URLVisitor downloads the contents of a URL, and if successful, returns
 // an info object representing the downloaded object.
 type URLVisitor struct {
-	*Mapper
-	URL    *url.URL
-	Schema validation.Schema
+	URL *url.URL
+	*StreamVisitor
 }
 
 func (v *URLVisitor) Visit(fn VisitorFunc) error {
@@ -230,18 +232,9 @@ func (v *URLVisitor) Visit(fn VisitorFunc) error {
 	if res.StatusCode != 200 {
 		return fmt.Errorf("unable to read URL %q, server reported %d %s", v.URL, res.StatusCode, res.Status)
 	}
-	data, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return fmt.Errorf("unable to read URL %q: %v\n", v.URL, err)
-	}
-	if err := ValidateSchema(data, v.Schema); err != nil {
-		return fmt.Errorf("error validating %q: %v", v.URL, err)
-	}
-	info, err := v.Mapper.InfoForData(data, v.URL.String())
-	if err != nil {
-		return err
-	}
-	return fn(info, nil)
+
+	v.StreamVisitor.Reader = res.Body
+	return v.StreamVisitor.Visit(fn)
 }
 
 // DecoratedVisitor will invoke the decorators in order prior to invoking the visitor function
@@ -307,7 +300,7 @@ func (v ContinueOnErrorVisitor) Visit(fn VisitorFunc) error {
 	if len(errs) == 1 {
 		return errs[0]
 	}
-	return errors.NewAggregate(errs)
+	return utilerrors.NewAggregate(errs)
 }
 
 // FlattenListVisitor flattens any objects that runtime.ExtractList recognizes as a list
@@ -335,18 +328,25 @@ func (v FlattenListVisitor) Visit(fn VisitorFunc) error {
 		if info.Object == nil {
 			return fn(info, nil)
 		}
-		items, err := runtime.ExtractList(info.Object)
+		items, err := meta.ExtractList(info.Object)
 		if err != nil {
 			return fn(info, nil)
 		}
 		if errs := runtime.DecodeList(items, struct {
 			runtime.ObjectTyper
 			runtime.Decoder
-		}{v.Mapper, info.Mapping.Codec}); len(errs) > 0 {
-			return errors.NewAggregate(errs)
+		}{v.Mapper, v.Mapper.Decoder}); len(errs) > 0 {
+			return utilerrors.NewAggregate(errs)
 		}
+
+		// If we have a GroupVersionKind on the list, prioritize that when asking for info on the objects contained in the list
+		var preferredGVKs []unversioned.GroupVersionKind
+		if info.Mapping != nil && !info.Mapping.GroupVersionKind.IsEmpty() {
+			preferredGVKs = append(preferredGVKs, info.Mapping.GroupVersionKind)
+		}
+
 		for i := range items {
-			item, err := v.InfoForObject(items[i])
+			item, err := v.InfoForObject(items[i], preferredGVKs)
 			if err != nil {
 				return err
 			}
@@ -564,13 +564,16 @@ func RetrieveLatest(info *Info, err error) error {
 	if err != nil {
 		return err
 	}
+	if meta.IsListType(info.Object) {
+		return fmt.Errorf("watch is only supported on individual resources and resource collections, but a list of resources is found")
+	}
 	if len(info.Name) == 0 {
 		return nil
 	}
 	if info.Namespaced() && len(info.Namespace) == 0 {
 		return fmt.Errorf("no namespace set on resource %s %q", info.Mapping.Resource, info.Name)
 	}
-	obj, err := NewHelper(info.Client, info.Mapping).Get(info.Namespace, info.Name)
+	obj, err := NewHelper(info.Client, info.Mapping).Get(info.Namespace, info.Name, info.Export)
 	if err != nil {
 		return err
 	}

@@ -21,22 +21,57 @@
 export nodes=${nodes:-"vcap@10.10.103.250 vcap@10.10.103.162 vcap@10.10.103.223"}
 
 # Define all your nodes role: a(master) or i(minion) or ai(both master and minion), must be the order same 
-role=${role:-"ai i i"}
+role=${roles:-"ai i i"}
 # If it practically impossible to set an array as an environment variable
 # from a script, so assume variable is a string then convert it to an array
 export roles=($role)
 
 # Define minion numbers
-export NUM_MINIONS=${NUM_MINIONS:-3}
+export NUM_NODES=${NUM_NODES:-3}
 # define the IP range used for service cluster IPs.
 # according to rfc 1918 ref: https://tools.ietf.org/html/rfc1918 choose a private ip range here.
 export SERVICE_CLUSTER_IP_RANGE=${SERVICE_CLUSTER_IP_RANGE:-192.168.3.0/24}  # formerly PORTAL_NET
 # define the IP range used for flannel overlay network, should not conflict with above SERVICE_CLUSTER_IP_RANGE
+
+# The Ubuntu scripting supports two ways of networking: Flannel and
+# CNI.  To use CNI: (1) put a CNI configuration file, whose basename
+# is the configured network type plus ".conf", somewhere on the driver
+# machine (the one running `kube-up.sh`) and set CNI_PLUGIN_CONF to a
+# pathname of that file, (2) put one or more executable binaries on
+# the driver machine and set CNI_PLUGIN_EXES to a space-separated list
+# of their pathnames, and (3) set CNI_KUBELET_TRIGGER to identify an
+# appropriate service on which to trigger the start and stop of the
+# kubelet on non-master machines.  For (1) and (2) the pathnames may
+# be relative, in which case they are relative to kubernetes/cluster.
+# If either of CNI_PLUGIN_CONF or CNI_PLUGIN_EXES is undefined or has
+# a zero length value then Flannel will be used instead of CNI.
+
+export CNI_PLUGIN_CONF CNI_PLUGIN_EXES CNI_KUBELET_TRIGGER
+CNI_PLUGIN_CONF=${CNI_PLUGIN_CONF:-""}
+CNI_PLUGIN_EXES=${CNI_PLUGIN_EXES:-""}
+CNI_KUBELET_TRIGGER=${CNI_KUBELET_TRIGGER:-networking}
+
+# Flannel networking is used if CNI networking is not.  The following
+# variable defines the CIDR block from which cluster addresses are
+# drawn.
 export FLANNEL_NET=${FLANNEL_NET:-172.16.0.0/16}
 
-# Admission Controllers to invoke prior to persisting objects in cluster
-export ADMISSION_CONTROL=NamespaceLifecycle,LimitRanger,ServiceAccount,ResourceQuota,DenyEscalatingExec,SecurityContextDeny
+# Optionally add other contents to the Flannel configuration JSON
+# object normally stored in etcd as /coreos.com/network/config.  Use
+# JSON syntax suitable for insertion into a JSON object constructor
+# after other field name:value pairs.  For example:
+# FLANNEL_OTHER_NET_CONFIG=', "SubnetMin": "172.16.10.0", "SubnetMax": "172.16.90.0"'
 
+export FLANNEL_OTHER_NET_CONFIG
+FLANNEL_OTHER_NET_CONFIG=''
+
+# Admission Controllers to invoke prior to persisting objects in cluster
+export ADMISSION_CONTROL=NamespaceLifecycle,LimitRanger,ServiceAccount,ResourceQuota,SecurityContextDeny
+
+# Path to the config file or directory of files of kubelet
+export KUBELET_CONFIG=${KUBELET_CONFIG:-""}
+
+# A port range to reserve for services with NodePort visibility
 SERVICE_NODE_PORT_RANGE=${SERVICE_NODE_PORT_RANGE:-"30000-32767"}
 
 # Optional: Enable node logging.
@@ -54,6 +89,10 @@ ENABLE_CLUSTER_MONITORING="${KUBE_ENABLE_CLUSTER_MONITORING:-true}"
 # --insecure-registry for local registries.
 DOCKER_OPTS=${DOCKER_OPTS:-""}
 
+# Extra options to set on the kube-proxy command line.  This is useful
+# for selecting the iptables proxy-mode, for example.
+KUBE_PROXY_EXTRA_OPTS=${KUBE_PROXY_EXTRA_OPTS:-""}
+
 # Optional: Install cluster DNS.
 ENABLE_CLUSTER_DNS="${KUBE_ENABLE_CLUSTER_DNS:-true}"
 # DNS_SERVER_IP must be a IP in SERVICE_CLUSTER_IP_RANGE
@@ -70,4 +109,6 @@ ENABLE_CLUSTER_UI="${KUBE_ENABLE_CLUSTER_UI:-true}"
 # Optional: Add http or https proxy when download easy-rsa.
 # Add envitonment variable separated with blank space like "http_proxy=http://10.x.x.x:8080 https_proxy=https://10.x.x.x:8443"
 PROXY_SETTING=${PROXY_SETTING:-""}
+
+DEBUG=${DEBUG:-"false"}
 

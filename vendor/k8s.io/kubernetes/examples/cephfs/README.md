@@ -13,9 +13,10 @@ If you don't have a Ceph cluster, you can set up a [containerized Ceph cluster](
 
 Then get the keyring from the Ceph cluster and copy it to */etc/ceph/keyring*.
 
-Once you have installed Ceph and new Kubernetes, you can create a pod based on my examples [cephfs.json](cephfs.json)  and [cephfs-with-secret.json](cephfs-with-secret.json). In the pod JSON, you need to provide the following information.
+Once you have installed Ceph and a Kubernetes cluster, you can create a pod based on my examples [cephfs.yaml](cephfs.yaml)  and [cephfs-with-secret.yaml](cephfs-with-secret.yaml). In the pod yaml, you need to provide the following information.
 
 - *monitors*:  Array of Ceph monitors.
+- *path*: Used as the mounted root, rather than the full Ceph tree. If not provided, default */* is used.
 - *user*: The RADOS user name. If not provided, default *admin* is used.
 - *secretFile*: The path to the keyring file. If not provided, default */etc/ceph/user.secret* is used.
 - *secretRef*: Reference to Ceph authentication secrets. If provided, *secret* overrides *secretFile*.
@@ -25,11 +26,13 @@ Once you have installed Ceph and new Kubernetes, you can create a pod based on m
 Here are the commands:
 
 ```console
+    # kubectl create -f examples/cephfs/cephfs.yaml
+
     # create a secret if you want to use Ceph secret instead of secret file
-    # cluster/kubectl.sh create -f examples/cephfs/secret/ceph-secret.yaml
+    # kubectl create -f examples/cephfs/secret/ceph-secret.yaml
 	
-    # cluster/kubectl.sh create -f examples/cephfs/v1beta3/cephfs.json
-    # cluster/kubectl.sh get pods
+    # kubectl create -f examples/cephfs/cephfs-with-secret.yaml
+    # kubectl get pods
 ```
 
  If you ssh to that machine, you can run `docker ps` to see the actual pod and `docker inspect` to see the volumes used by the container.

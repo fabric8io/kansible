@@ -2,6 +2,7 @@ package vcs
 
 import (
 	"io/ioutil"
+	"time"
 	//"log"
 	"os"
 	"testing"
@@ -10,7 +11,7 @@ import (
 // Canary test to ensure HgRepo implements the Repo interface.
 var _ Repo = &HgRepo{}
 
-// To verify hg is working we perform intergration testing
+// To verify hg is working we perform integration testing
 // with a known hg service.
 
 func TestHg(t *testing.T) {
@@ -147,6 +148,29 @@ func TestHg(t *testing.T) {
 		t.Error("Hg incorrectly reporting dirty")
 	}
 
+	ci, err := repo.CommitInfo("a5494ba2177f")
+	if err != nil {
+		t.Error(err)
+	}
+	if ci.Commit != "a5494ba2177ff9ef26feb3c155dfecc350b1a8ef" {
+		t.Error("Hg.CommitInfo wrong commit id")
+	}
+	if ci.Author != "Matt Farina <matt@mattfarina.com>" {
+		t.Error("Hg.CommitInfo wrong author")
+	}
+	if ci.Message != "A commit" {
+		t.Error("Hg.CommitInfo wrong message")
+	}
+
+	ti := time.Unix(1438287248, 0)
+	if !ti.Equal(ci.Date) {
+		t.Error("Hg.CommitInfo wrong date")
+	}
+
+	_, err = repo.CommitInfo("asdfasdfasdf")
+	if err != ErrRevisionUnavailable {
+		t.Error("Hg didn't return expected ErrRevisionUnavailable")
+	}
 }
 
 func TestHgCheckLocal(t *testing.T) {

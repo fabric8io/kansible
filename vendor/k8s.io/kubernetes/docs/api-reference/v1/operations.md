@@ -3,7 +3,7 @@
 
 <!-- END MUNGE: UNVERSIONED_WARNING -->
 <!-- needed for gh-pages to render html files when imported -->
-{% include v1.1/v1-operations.html %}
+{% include v1.2/v1-operations.html %}
 
 
 

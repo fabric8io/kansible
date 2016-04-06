@@ -8,13 +8,12 @@ package openpgp // import "golang.org/x/crypto/openpgp"
 import (
 	"crypto"
 	_ "crypto/sha256"
-	"hash"
-	"io"
-	"strconv"
-
 	"golang.org/x/crypto/openpgp/armor"
 	"golang.org/x/crypto/openpgp/errors"
 	"golang.org/x/crypto/openpgp/packet"
+	"hash"
+	"io"
+	"strconv"
 )
 
 // SignatureType is the armor type for a PGP signature.
@@ -196,9 +195,9 @@ FindKey:
 		// Try the symmetric passphrase first
 		if len(symKeys) != 0 && passphrase != nil {
 			for _, s := range symKeys {
-				key, cipherFunc, err := s.Decrypt(passphrase)
-				if err == nil {
-					decrypted, err = se.Decrypt(cipherFunc, key)
+				err = s.Decrypt(passphrase)
+				if err == nil && !s.Encrypted {
+					decrypted, err = se.Decrypt(s.CipherFunc, s.Key)
 					if err != nil && err != errors.ErrKeyIncorrect {
 						return nil, err
 					}
@@ -212,9 +211,7 @@ FindKey:
 	}
 
 	md.decrypted = decrypted
-	if err := packets.Push(decrypted); err != nil {
-		return nil, err
-	}
+	packets.Push(decrypted)
 	return readSignedMessage(packets, md, keyring)
 }
 
@@ -238,9 +235,7 @@ FindLiteralData:
 		}
 		switch p := p.(type) {
 		case *packet.Compressed:
-			if err := packets.Push(p.Body); err != nil {
-				return nil, err
-			}
+			packets.Push(p.Body)
 		case *packet.OnePassSignature:
 			if !p.IsLast {
 				return nil, errors.UnsupportedError("nested signatures")
@@ -358,55 +353,44 @@ func (scr *signatureCheckReader) Read(buf []byte) (n int, err error) {
 // returns the signer if the signature is valid. If the signer isn't known,
 // ErrUnknownIssuer is returned.
 func CheckDetachedSignature(keyring KeyRing, signed, signature io.Reader) (signer *Entity, err error) {
+	p, err := packet.Read(signature)
+	if err != nil {
+		return
+	}
+
 	var issuerKeyId uint64
 	var hashFunc crypto.Hash
 	var sigType packet.SignatureType
-	var keys []Key
-	var p packet.Packet
 
-	packets := packet.NewReader(signature)
-	for {
-		p, err = packets.Next()
-		if err == io.EOF {
-			return nil, errors.ErrUnknownIssuer
+	switch sig := p.(type) {
+	case *packet.Signature:
+		if sig.IssuerKeyId == nil {
+			return nil, errors.StructuralError("signature doesn't have an issuer")
 		}
-		if err != nil {
-			return nil, err
-		}
-
-		switch sig := p.(type) {
-		case *packet.Signature:
-			if sig.IssuerKeyId == nil {
-				return nil, errors.StructuralError("signature doesn't have an issuer")
-			}
-			issuerKeyId = *sig.IssuerKeyId
-			hashFunc = sig.Hash
-			sigType = sig.SigType
-		case *packet.SignatureV3:
-			issuerKeyId = sig.IssuerKeyId
-			hashFunc = sig.Hash
-			sigType = sig.SigType
-		default:
-			return nil, errors.StructuralError("non signature packet found")
-		}
-
-		keys = keyring.KeysByIdUsage(issuerKeyId, packet.KeyFlagSign)
-		if len(keys) > 0 {
-			break
-		}
-	}
-
-	if len(keys) == 0 {
-		panic("unreachable")
+		issuerKeyId = *sig.IssuerKeyId
+		hashFunc = sig.Hash
+		sigType = sig.SigType
+	case *packet.SignatureV3:
+		issuerKeyId = sig.IssuerKeyId
+		hashFunc = sig.Hash
+		sigType = sig.SigType
+	default:
+		return nil, errors.StructuralError("non signature packet found")
 	}
 
 	h, wrappedHash, err := hashForSignature(hashFunc, sigType)
 	if err != nil {
-		return nil, err
+		return
 	}
 
-	if _, err := io.Copy(wrappedHash, signed); err != nil && err != io.EOF {
-		return nil, err
+	_, err = io.Copy(wrappedHash, signed)
+	if err != nil && err != io.EOF {
+		return
+	}
+
+	keys := keyring.KeysByIdUsage(issuerKeyId, packet.KeyFlagSign)
+	if len(keys) == 0 {
+		return nil, errors.ErrUnknownIssuer
 	}
 
 	for _, key := range keys {
@@ -415,15 +399,15 @@ func CheckDetachedSignature(keyring KeyRing, signed, signature io.Reader) (signe
 			err = key.PublicKey.VerifySignature(h, sig)
 		case *packet.SignatureV3:
 			err = key.PublicKey.VerifySignatureV3(h, sig)
-		default:
-			panic("unreachable")
 		}
-
 		if err == nil {
 			return key.Entity, nil
 		}
 	}
 
+	if err == nil {
+		err = errors.ErrUnknownIssuer
+	}
 	return nil, err
 }
 

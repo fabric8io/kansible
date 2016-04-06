@@ -24,21 +24,22 @@ import (
 	"github.com/golang/glog"
 	"k8s.io/kubernetes/pkg/api"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
-	kubeletTypes "k8s.io/kubernetes/pkg/kubelet/types"
-	"k8s.io/kubernetes/pkg/util"
+	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
+	"k8s.io/kubernetes/pkg/types"
+	"k8s.io/kubernetes/pkg/util/intstr"
 )
 
 type HandlerRunner struct {
-	httpGetter       kubeletTypes.HttpGetter
+	httpGetter       kubetypes.HttpGetter
 	commandRunner    kubecontainer.ContainerCommandRunner
 	containerManager podStatusProvider
 }
 
 type podStatusProvider interface {
-	GetPodStatus(pod *api.Pod) (*api.PodStatus, error)
+	GetPodStatus(uid types.UID, name, namespace string) (*kubecontainer.PodStatus, error)
 }
 
-func NewHandlerRunner(httpGetter kubeletTypes.HttpGetter, commandRunner kubecontainer.ContainerCommandRunner, containerManager podStatusProvider) kubecontainer.HandlerRunner {
+func NewHandlerRunner(httpGetter kubetypes.HttpGetter, commandRunner kubecontainer.ContainerCommandRunner, containerManager podStatusProvider) kubecontainer.HandlerRunner {
 	return &HandlerRunner{
 		httpGetter:       httpGetter,
 		commandRunner:    commandRunner,
@@ -46,8 +47,7 @@ func NewHandlerRunner(httpGetter kubeletTypes.HttpGetter, commandRunner kubecont
 	}
 }
 
-// TODO(yifan): Use a strong type for containerID.
-func (hr *HandlerRunner) Run(containerID string, pod *api.Pod, container *api.Container, handler *api.Handler) error {
+func (hr *HandlerRunner) Run(containerID kubecontainer.ContainerID, pod *api.Pod, container *api.Container, handler *api.Handler) error {
 	switch {
 	case handler.Exec != nil:
 		_, err := hr.commandRunner.RunInContainer(containerID, handler.Exec.Command)
@@ -67,21 +67,19 @@ func (hr *HandlerRunner) Run(containerID string, pod *api.Pod, container *api.Co
 // an attempt is made to find a port with the same name in the container spec.
 // If a port with the same name is found, it's ContainerPort value is returned.  If no matching
 // port is found, an error is returned.
-func resolvePort(portReference util.IntOrString, container *api.Container) (int, error) {
-	if portReference.Kind == util.IntstrInt {
-		return portReference.IntVal, nil
-	} else {
-		portName := portReference.StrVal
-		port, err := strconv.Atoi(portName)
-		if err == nil {
-			return port, nil
+func resolvePort(portReference intstr.IntOrString, container *api.Container) (int, error) {
+	if portReference.Type == intstr.Int {
+		return portReference.IntValue(), nil
+	}
+	portName := portReference.StrVal
+	port, err := strconv.Atoi(portName)
+	if err == nil {
+		return port, nil
+	}
+	for _, portSpec := range container.Ports {
+		if portSpec.Name == portName {
+			return portSpec.ContainerPort, nil
 		}
-		for _, portSpec := range container.Ports {
-			if portSpec.Name == portName {
-				return portSpec.ContainerPort, nil
-			}
-		}
-
 	}
 	return -1, fmt.Errorf("couldn't find port: %v in %v", portReference, container)
 }
@@ -89,18 +87,18 @@ func resolvePort(portReference util.IntOrString, container *api.Container) (int,
 func (hr *HandlerRunner) runHTTPHandler(pod *api.Pod, container *api.Container, handler *api.Handler) error {
 	host := handler.HTTPGet.Host
 	if len(host) == 0 {
-		status, err := hr.containerManager.GetPodStatus(pod)
+		status, err := hr.containerManager.GetPodStatus(pod.UID, pod.Name, pod.Namespace)
 		if err != nil {
 			glog.Errorf("Unable to get pod info, event handlers may be invalid.")
 			return err
 		}
-		if status.PodIP == "" {
+		if status.IP == "" {
 			return fmt.Errorf("failed to find networking container: %v", status)
 		}
-		host = status.PodIP
+		host = status.IP
 	}
 	var port int
-	if handler.HTTPGet.Port.Kind == util.IntstrString && len(handler.HTTPGet.Port.StrVal) == 0 {
+	if handler.HTTPGet.Port.Type == intstr.String && len(handler.HTTPGet.Port.StrVal) == 0 {
 		port = 80
 	} else {
 		var err error

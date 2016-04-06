@@ -18,7 +18,7 @@
 # supports key features for Kubernetes version 1.0.
 
 # Instructions:
-#  - Setup a Kubernetes cluster with $NUM_MINIONS nodes (defined below).
+#  - Setup a Kubernetes cluster with $NUM_NODES nodes (defined below).
 #  - Provide a Kubeconfig file whose current context is set to the
 #    cluster to be tested, and with suitable auth setting.
 #  - Specify the location of that kubeconfig with, e.g.:
@@ -39,13 +39,13 @@
 # About the conformance test:
 # The conformance test checks whether a kubernetes cluster supports
 # a minimum set of features to be called "Kubernetes".  It is similar
-# to `hack/e2e-test.sh` but it differs in that:
-#  - hack/e2e-test.sh is intended to test a cluster with binaries built at HEAD,
+# to `hack/e2e.go` but it differs in that:
+#  - hack/e2e.go is intended to test a cluster with binaries built at HEAD,
 #    while this conformance test does not care what version the binaries are.
 #    - this means the user needs to setup a cluster first.
 #    - this means the user does not need to write any cluster/... scripts.  Custom
 #      clusters can be tested.
-#  - hack/e2e-test.sh is intended to run e2e tests built at HEAD, while
+#  - hack/e2e.go is intended to run e2e tests built at HEAD, while
 #    this conformance test is intended to be run e2e tests built at a particular
 #    version.  This ensures that all conformance testees run the same set of tests,
 #    regardless of when they test for conformance.
@@ -61,6 +61,7 @@
 # a new column for conformance at that new version, and notify
 # community.
 
+TEST_ARGS="$@"
 
 : ${KUBECONFIG:?"Must set KUBECONFIG before running conformance test."}
 echo "Conformance test using current-context of ${KUBECONFIG}"
@@ -70,7 +71,7 @@ echo -n "Conformance test SHA:"
 HEAD_SHA=$(git rev-parse HEAD)
 echo $HEAD_SHA
 echo "Conformance test version tag(s):"
-git show-ref | grep $HEAD_SHA | grep refs/tags
+git tag --points-at $HEAD_SHA
 echo
 echo "Conformance test checking conformance with Kubernetes version 1.0"
 
@@ -78,10 +79,9 @@ echo "Conformance test checking conformance with Kubernetes version 1.0"
 # somewhere in the description (i.e. either in the Describe part or the It part).
 # The list of tagged conformance tests can be retrieved by:
 #
-# NUM_MINIONS=4 KUBERNETES_CONFORMANCE_TEST="y" \
+# NUM_NODES=4 KUBERNETES_CONFORMANCE_TEST="y" \
 # hack/ginkgo-e2e.sh -ginkgo.focus='\[Conformance\]' -ginkgo.dryRun=true
 
 declare -x KUBERNETES_CONFORMANCE_TEST="y"
-declare -x NUM_MINIONS=4
-hack/ginkgo-e2e.sh -ginkgo.focus='\[Conformance\]'
-exit $?
+declare -x NUM_NODES=4
+exec hack/ginkgo-e2e.sh -ginkgo.focus='\[Conformance\]' ${TEST_ARGS}

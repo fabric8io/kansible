@@ -22,9 +22,9 @@ import (
 	"github.com/golang/glog"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util"
 	"k8s.io/kubernetes/pkg/util/exec"
 	"k8s.io/kubernetes/pkg/util/mount"
+	"k8s.io/kubernetes/pkg/util/strings"
 	"k8s.io/kubernetes/pkg/volume"
 )
 
@@ -45,8 +45,9 @@ const (
 	rbdPluginName = "kubernetes.io/rbd"
 )
 
-func (plugin *rbdPlugin) Init(host volume.VolumeHost) {
+func (plugin *rbdPlugin) Init(host volume.VolumeHost) error {
 	plugin.host = host
+	return nil
 }
 
 func (plugin *rbdPlugin) Name() string {
@@ -57,13 +58,8 @@ func (plugin *rbdPlugin) CanSupport(spec *volume.Spec) bool {
 	if (spec.Volume != nil && spec.Volume.RBD == nil) || (spec.PersistentVolume != nil && spec.PersistentVolume.Spec.RBD == nil) {
 		return false
 	}
-	// see if rbd is there
-	_, err := plugin.execCommand("rbd", []string{"-h"})
-	if err == nil {
-		return true
-	}
 
-	return false
+	return true
 }
 
 func (plugin *rbdPlugin) GetAccessModes() []api.PersistentVolumeAccessMode {
@@ -83,7 +79,7 @@ func (plugin *rbdPlugin) NewBuilder(spec *volume.Spec, pod *api.Pod, _ volume.Vo
 			return nil, fmt.Errorf("Cannot get kube client")
 		}
 
-		secretName, err := kubeClient.Secrets(pod.Namespace).Get(source.SecretRef.Name)
+		secretName, err := kubeClient.Core().Secrets(pod.Namespace).Get(source.SecretRef.Name)
 		if err != nil {
 			glog.Errorf("Couldn't get secret %v/%v", pod.Namespace, source.SecretRef)
 			return nil, err
@@ -131,7 +127,7 @@ func (plugin *rbdPlugin) newBuilderInternal(spec *volume.Spec, podUID types.UID,
 			Pool:     pool,
 			ReadOnly: readOnly,
 			manager:  manager,
-			mounter:  mounter,
+			mounter:  &mount.SafeFormatAndMount{mounter, exec.New()},
 			plugin:   plugin,
 		},
 		Mon:     source.CephMonitors,
@@ -154,7 +150,7 @@ func (plugin *rbdPlugin) newCleanerInternal(volName string, podUID types.UID, ma
 				podUID:  podUID,
 				volName: volName,
 				manager: manager,
-				mounter: mounter,
+				mounter: &mount.SafeFormatAndMount{mounter, exec.New()},
 				plugin:  plugin,
 			},
 			Mon: make([]string, 0),
@@ -169,15 +165,16 @@ type rbd struct {
 	Image    string
 	ReadOnly bool
 	plugin   *rbdPlugin
-	mounter  mount.Interface
+	mounter  *mount.SafeFormatAndMount
 	// Utility interface that provides API calls to the provider to attach/detach disks.
 	manager diskManager
+	volume.MetricsNil
 }
 
 func (rbd *rbd) GetPath() string {
 	name := rbdPluginName
 	// safe to use PodVolumeDir now: volume teardown occurs before pod is cleaned up
-	return rbd.plugin.host.GetPodVolumeDir(rbd.podUID, util.EscapeQualifiedNameForDisk(name), rbd.volName)
+	return rbd.plugin.host.GetPodVolumeDir(rbd.podUID, strings.EscapeQualifiedNameForDisk(name), rbd.volName)
 }
 
 type rbdBuilder struct {
@@ -192,27 +189,25 @@ type rbdBuilder struct {
 
 var _ volume.Builder = &rbdBuilder{}
 
-func (b *rbdBuilder) SetUp() error {
-	return b.SetUpAt(b.GetPath())
+func (b *rbd) GetAttributes() volume.Attributes {
+	return volume.Attributes{
+		ReadOnly:        b.ReadOnly,
+		Managed:         !b.ReadOnly,
+		SupportsSELinux: true,
+	}
 }
 
-func (b *rbdBuilder) SetUpAt(dir string) error {
+func (b *rbdBuilder) SetUp(fsGroup *int64) error {
+	return b.SetUpAt(b.GetPath(), fsGroup)
+}
+
+func (b *rbdBuilder) SetUpAt(dir string, fsGroup *int64) error {
 	// diskSetUp checks mountpoints and prevent repeated calls
-	err := diskSetUp(b.manager, *b, dir, b.mounter)
+	err := diskSetUp(b.manager, *b, dir, b.mounter, fsGroup)
 	if err != nil {
 		glog.Errorf("rbd: failed to setup")
-		return err
 	}
-	globalPDPath := b.manager.MakeGlobalPDName(*b.rbd)
-	// make mountpoint rw/ro work as expected
-	//FIXME revisit pkg/util/mount and ensure rw/ro is implemented as expected
-	mode := "rw"
-	if b.ReadOnly {
-		mode = "ro"
-	}
-	b.plugin.execCommand("mount", []string{"-o", "remount," + mode, globalPDPath, dir})
-
-	return nil
+	return err
 }
 
 type rbdCleaner struct {
@@ -220,10 +215,6 @@ type rbdCleaner struct {
 }
 
 var _ volume.Cleaner = &rbdCleaner{}
-
-func (b *rbd) IsReadOnly() bool {
-	return b.ReadOnly
-}
 
 // Unmounts the bind mount, and detaches the disk only if the disk
 // resource was the last reference to that disk on the kubelet.

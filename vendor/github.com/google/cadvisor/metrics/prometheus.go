@@ -16,10 +16,12 @@ package metrics
 
 import (
 	"fmt"
+	"regexp"
 	"time"
 
-	"github.com/golang/glog"
 	info "github.com/google/cadvisor/info/v1"
+
+	"github.com/golang/glog"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -124,6 +126,20 @@ func NewPrometheusCollector(infoProvider infoProvider, f ContainerNameToLabelsFu
 						})
 					}
 					return values
+				},
+			}, {
+				name:      "container_memory_cache",
+				help:      "Number of bytes of page cache memory.",
+				valueType: prometheus.GaugeValue,
+				getValues: func(s *info.ContainerStats) metricValues {
+					return metricValues{{value: float64(s.Memory.Cache)}}
+				},
+			}, {
+				name:      "container_memory_rss",
+				help:      "Size of RSS in bytes.",
+				valueType: prometheus.GaugeValue,
+				getValues: func(s *info.ContainerStats) metricValues {
+					return metricValues{{value: float64(s.Memory.RSS)}}
 				},
 			}, {
 				name:      "container_memory_failcnt",
@@ -507,9 +523,18 @@ func (c *PrometheusCollector) collectContainersInfo(ch chan<- prometheus.Metric)
 		if c.containerNameToLabels != nil {
 			newLabels := c.containerNameToLabels(name)
 			for k, v := range newLabels {
-				baseLabels = append(baseLabels, k)
+				baseLabels = append(baseLabels, sanitizeLabelName(k))
 				baseLabelValues = append(baseLabelValues, v)
 			}
+		}
+
+		for k, v := range container.Spec.Labels {
+			baseLabels = append(baseLabels, sanitizeLabelName(k))
+			baseLabelValues = append(baseLabelValues, v)
+		}
+		for k, v := range container.Spec.Envs {
+			baseLabels = append(baseLabels, sanitizeLabelName(k))
+			baseLabelValues = append(baseLabelValues, v)
 		}
 
 		// Container spec
@@ -517,10 +542,16 @@ func (c *PrometheusCollector) collectContainersInfo(ch chan<- prometheus.Metric)
 		ch <- prometheus.MustNewConstMetric(desc, prometheus.GaugeValue, float64(container.Spec.CreationTime.Unix()), baseLabelValues...)
 
 		if container.Spec.HasCpu {
+			desc = prometheus.NewDesc("container_spec_cpu_period", "CPU period of the container.", baseLabels, nil)
+			ch <- prometheus.MustNewConstMetric(desc, prometheus.GaugeValue, float64(container.Spec.Cpu.Period), baseLabelValues...)
+			if container.Spec.Cpu.Quota != 0 {
+				desc = prometheus.NewDesc("container_spec_cpu_quota", "CPU quota of the container.", baseLabels, nil)
+				ch <- prometheus.MustNewConstMetric(desc, prometheus.GaugeValue, float64(container.Spec.Cpu.Quota), baseLabelValues...)
+			}
 			desc := prometheus.NewDesc("container_spec_cpu_shares", "CPU share of the container.", baseLabels, nil)
 			ch <- prometheus.MustNewConstMetric(desc, prometheus.GaugeValue, float64(container.Spec.Cpu.Limit), baseLabelValues...)
-		}
 
+		}
 		if container.Spec.HasMemory {
 			desc := prometheus.NewDesc("container_spec_memory_limit_bytes", "Memory limit for the container.", baseLabels, nil)
 			ch <- prometheus.MustNewConstMetric(desc, prometheus.GaugeValue, specMemoryValue(container.Spec.Memory.Limit), baseLabelValues...)
@@ -569,4 +600,12 @@ func specMemoryValue(v uint64) float64 {
 		return 0
 	}
 	return float64(v)
+}
+
+var invalidLabelCharRE = regexp.MustCompile(`[^a-zA-Z0-9_]`)
+
+// sanitizeLabelName replaces anything that doesn't match
+// client_label.LabelNameRE with an underscore.
+func sanitizeLabelName(name string) string {
+	return invalidLabelCharRE.ReplaceAllString(name, "_")
 }

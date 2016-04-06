@@ -5,6 +5,7 @@ import (
 	"net"
 )
 
+// IpOpt type that hold an IP
 type IpOpt struct {
 	*net.IP
 }
@@ -27,5 +28,8 @@ func (o *IpOpt) Set(val string) error {
 }
 
 func (o *IpOpt) String() string {
+	if *o.IP == nil {
+		return ""
+	}
 	return o.IP.String()
 }

@@ -17,21 +17,32 @@ limitations under the License.
 package etcd
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/rest"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
+	"k8s.io/kubernetes/pkg/kubelet/client"
+	"k8s.io/kubernetes/pkg/registry/cachesize"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	etcdgeneric "k8s.io/kubernetes/pkg/registry/generic/etcd"
 	"k8s.io/kubernetes/pkg/registry/node"
+	noderest "k8s.io/kubernetes/pkg/registry/node/rest"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/storage"
 )
+
+// NodeStorage includes storage for nodes and all sub resources
+type NodeStorage struct {
+	Node   *REST
+	Status *StatusREST
+	Proxy  *noderest.ProxyREST
+}
 
 type REST struct {
 	*etcdgeneric.Etcd
-	connection client.ConnectionInfoGetter
+	connection     client.ConnectionInfoGetter
+	proxyTransport http.RoundTripper
 }
 
 // StatusREST implements the REST endpoint for changing the status of a pod.
@@ -49,27 +60,16 @@ func (r *StatusREST) Update(ctx api.Context, obj runtime.Object) (runtime.Object
 }
 
 // NewREST returns a RESTStorage object that will work against nodes.
-func NewREST(s storage.Interface, useCacher bool, connection client.ConnectionInfoGetter) (*REST, *StatusREST) {
+func NewStorage(opts generic.RESTOptions, connection client.ConnectionInfoGetter, proxyTransport http.RoundTripper) NodeStorage {
 	prefix := "/minions"
 
-	storageInterface := s
-	if useCacher {
-		config := storage.CacherConfig{
-			CacheCapacity:  1000,
-			Storage:        s,
-			Type:           &api.Node{},
-			ResourcePrefix: prefix,
-			KeyFunc: func(obj runtime.Object) (string, error) {
-				return storage.NoNamespaceKeyFunc(prefix, obj)
-			},
-			NewListFunc: func() runtime.Object { return &api.NodeList{} },
-		}
-		storageInterface = storage.NewCacher(config)
-	}
+	newListFunc := func() runtime.Object { return &api.NodeList{} }
+	storageInterface := opts.Decorator(
+		opts.Storage, cachesize.GetWatchCacheSizeByResource(cachesize.Nodes), &api.Node{}, prefix, node.Strategy, newListFunc)
 
 	store := &etcdgeneric.Etcd{
 		NewFunc:     func() runtime.Object { return &api.Node{} },
-		NewListFunc: func() runtime.Object { return &api.NodeList{} },
+		NewListFunc: newListFunc,
 		KeyRootFunc: func(ctx api.Context) string {
 			return prefix
 		},
@@ -79,11 +79,13 @@ func NewREST(s storage.Interface, useCacher bool, connection client.ConnectionIn
 		ObjectNameFunc: func(obj runtime.Object) (string, error) {
 			return obj.(*api.Node).Name, nil
 		},
-		PredicateFunc: node.MatchNode,
-		EndpointName:  "node",
+		PredicateFunc:           node.MatchNode,
+		QualifiedResource:       api.Resource("nodes"),
+		DeleteCollectionWorkers: opts.DeleteCollectionWorkers,
 
 		CreateStrategy: node.Strategy,
 		UpdateStrategy: node.Strategy,
+		ExportStrategy: node.Strategy,
 
 		Storage: storageInterface,
 	}
@@ -91,7 +93,13 @@ func NewREST(s storage.Interface, useCacher bool, connection client.ConnectionIn
 	statusStore := *store
 	statusStore.UpdateStrategy = node.StatusStrategy
 
-	return &REST{store, connection}, &StatusREST{store: &statusStore}
+	nodeREST := &REST{store, connection, proxyTransport}
+
+	return NodeStorage{
+		Node:   nodeREST,
+		Status: &StatusREST{store: &statusStore},
+		Proxy:  &noderest.ProxyREST{Store: store, Connection: client.ConnectionInfoGetter(nodeREST), ProxyTransport: proxyTransport},
+	}
 }
 
 // Implement Redirector.
@@ -99,5 +107,35 @@ var _ = rest.Redirector(&REST{})
 
 // ResourceLocation returns a URL to which one can send traffic for the specified node.
 func (r *REST) ResourceLocation(ctx api.Context, id string) (*url.URL, http.RoundTripper, error) {
-	return node.ResourceLocation(r, r.connection, ctx, id)
+	return node.ResourceLocation(r, r, r.proxyTransport, ctx, id)
+}
+
+var _ = client.ConnectionInfoGetter(&REST{})
+
+func (r *REST) getKubeletPort(ctx api.Context, nodeName string) (int, error) {
+	// We probably shouldn't care about context when looking for Node object.
+	obj, err := r.Get(ctx, nodeName)
+	if err != nil {
+		return 0, err
+	}
+	node, ok := obj.(*api.Node)
+	if !ok {
+		return 0, fmt.Errorf("Unexpected object type: %#v", node)
+	}
+	return node.Status.DaemonEndpoints.KubeletEndpoint.Port, nil
+}
+
+func (c *REST) GetConnectionInfo(ctx api.Context, nodeName string) (string, uint, http.RoundTripper, error) {
+	scheme, port, transport, err := c.connection.GetConnectionInfo(ctx, nodeName)
+	if err != nil {
+		return "", 0, nil, err
+	}
+	daemonPort, err := c.getKubeletPort(ctx, nodeName)
+	if err != nil {
+		return "", 0, nil, err
+	}
+	if daemonPort > 0 {
+		return scheme, uint(daemonPort), transport, nil
+	}
+	return scheme, port, transport, nil
 }

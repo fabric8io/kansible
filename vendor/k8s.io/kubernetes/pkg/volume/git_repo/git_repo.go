@@ -20,11 +20,12 @@ import (
 	"fmt"
 	"io/ioutil"
 	"path"
+	"strings"
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util"
 	"k8s.io/kubernetes/pkg/util/exec"
+	utilstrings "k8s.io/kubernetes/pkg/util/strings"
 	"k8s.io/kubernetes/pkg/volume"
 	volumeutil "k8s.io/kubernetes/pkg/volume/util"
 )
@@ -40,12 +41,17 @@ type gitRepoPlugin struct {
 
 var _ volume.VolumePlugin = &gitRepoPlugin{}
 
+var wrappedVolumeSpec = volume.Spec{
+	Volume: &api.Volume{VolumeSource: api.VolumeSource{EmptyDir: &api.EmptyDirVolumeSource{}}},
+}
+
 const (
 	gitRepoPluginName = "kubernetes.io/git-repo"
 )
 
-func (plugin *gitRepoPlugin) Init(host volume.VolumeHost) {
+func (plugin *gitRepoPlugin) Init(host volume.VolumeHost) error {
 	plugin.host = host
+	return nil
 }
 
 func (plugin *gitRepoPlugin) Name() string {
@@ -66,6 +72,7 @@ func (plugin *gitRepoPlugin) NewBuilder(spec *volume.Spec, pod *api.Pod, opts vo
 		pod:      *pod,
 		source:   spec.Volume.GitRepo.Repository,
 		revision: spec.Volume.GitRepo.Revision,
+		target:   spec.Volume.GitRepo.Directory,
 		exec:     exec.New(),
 		opts:     opts,
 	}, nil
@@ -87,13 +94,14 @@ type gitRepoVolume struct {
 	volName string
 	podUID  types.UID
 	plugin  *gitRepoPlugin
+	volume.MetricsNil
 }
 
 var _ volume.Volume = &gitRepoVolume{}
 
 func (gr *gitRepoVolume) GetPath() string {
 	name := gitRepoPluginName
-	return gr.plugin.host.GetPodVolumeDir(gr.podUID, util.EscapeQualifiedNameForDisk(name), gr.volName)
+	return gr.plugin.host.GetPodVolumeDir(gr.podUID, utilstrings.EscapeQualifiedNameForDisk(name), gr.volName)
 }
 
 // gitRepoVolumeBuilder builds git repo volumes.
@@ -103,59 +111,76 @@ type gitRepoVolumeBuilder struct {
 	pod      api.Pod
 	source   string
 	revision string
+	target   string
 	exec     exec.Interface
 	opts     volume.VolumeOptions
 }
 
 var _ volume.Builder = &gitRepoVolumeBuilder{}
 
+func (b *gitRepoVolumeBuilder) GetAttributes() volume.Attributes {
+	return volume.Attributes{
+		ReadOnly:        false,
+		Managed:         true,
+		SupportsSELinux: true, // xattr change should be okay, TODO: double check
+	}
+}
+
 // SetUp creates new directory and clones a git repo.
-func (b *gitRepoVolumeBuilder) SetUp() error {
-	return b.SetUpAt(b.GetPath())
-}
-
-func (b *gitRepoVolumeBuilder) IsReadOnly() bool {
-	return false
-}
-
-// This is the spec for the volume that this plugin wraps.
-var wrappedVolumeSpec = &volume.Spec{
-	Volume: &api.Volume{VolumeSource: api.VolumeSource{EmptyDir: &api.EmptyDirVolumeSource{}}},
+func (b *gitRepoVolumeBuilder) SetUp(fsGroup *int64) error {
+	return b.SetUpAt(b.GetPath(), fsGroup)
 }
 
 // SetUpAt creates new directory and clones a git repo.
-func (b *gitRepoVolumeBuilder) SetUpAt(dir string) error {
+func (b *gitRepoVolumeBuilder) SetUpAt(dir string, fsGroup *int64) error {
 	if volumeutil.IsReady(b.getMetaDir()) {
 		return nil
 	}
 
 	// Wrap EmptyDir, let it do the setup.
-	wrapped, err := b.plugin.host.NewWrapperBuilder(wrappedVolumeSpec, &b.pod, b.opts)
+	wrapped, err := b.plugin.host.NewWrapperBuilder(b.volName, wrappedVolumeSpec, &b.pod, b.opts)
 	if err != nil {
 		return err
 	}
-	if err := wrapped.SetUpAt(dir); err != nil {
+	if err := wrapped.SetUpAt(dir, fsGroup); err != nil {
 		return err
 	}
 
-	if output, err := b.execCommand("git", []string{"clone", b.source}, dir); err != nil {
-		return fmt.Errorf("failed to exec 'git clone %s': %s: %v", b.source, output, err)
+	args := []string{"clone", b.source}
+
+	if len(b.target) != 0 {
+		args = append(args, b.target)
+	}
+	if output, err := b.execCommand("git", args, dir); err != nil {
+		return fmt.Errorf("failed to exec 'git %s': %s: %v",
+			strings.Join(args, " "), output, err)
 	}
 
 	files, err := ioutil.ReadDir(dir)
 	if err != nil {
 		return err
 	}
-	if len(files) != 1 {
-		return fmt.Errorf("unexpected directory contents: %v", files)
-	}
+
 	if len(b.revision) == 0 {
 		// Done!
 		volumeutil.SetReady(b.getMetaDir())
 		return nil
 	}
 
-	subdir := path.Join(dir, files[0].Name())
+	var subdir string
+
+	switch {
+	case b.target == ".":
+		// if target dir is '.', use the current dir
+		subdir = path.Join(dir)
+	case len(files) == 1:
+		// if target is not '.', use the generated folder
+		subdir = path.Join(dir, files[0].Name())
+	default:
+		// if target is not '.', but generated many files, it's wrong
+		return fmt.Errorf("unexpected directory contents: %v", files)
+	}
+
 	if output, err := b.execCommand("git", []string{"checkout", b.revision}, subdir); err != nil {
 		return fmt.Errorf("failed to exec 'git checkout %s': %s: %v", b.revision, output, err)
 	}
@@ -168,7 +193,7 @@ func (b *gitRepoVolumeBuilder) SetUpAt(dir string) error {
 }
 
 func (b *gitRepoVolumeBuilder) getMetaDir() string {
-	return path.Join(b.plugin.host.GetPodPluginDir(b.podUID, util.EscapeQualifiedNameForDisk(gitRepoPluginName)), b.volName)
+	return path.Join(b.plugin.host.GetPodPluginDir(b.podUID, utilstrings.EscapeQualifiedNameForDisk(gitRepoPluginName)), b.volName)
 }
 
 func (b *gitRepoVolumeBuilder) execCommand(command string, args []string, dir string) ([]byte, error) {
@@ -191,8 +216,9 @@ func (c *gitRepoVolumeCleaner) TearDown() error {
 
 // TearDownAt simply deletes everything in the directory.
 func (c *gitRepoVolumeCleaner) TearDownAt(dir string) error {
+
 	// Wrap EmptyDir, let it do the teardown.
-	wrapped, err := c.plugin.host.NewWrapperCleaner(wrappedVolumeSpec, c.podUID)
+	wrapped, err := c.plugin.host.NewWrapperCleaner(c.volName, wrappedVolumeSpec, c.podUID)
 	if err != nil {
 		return err
 	}

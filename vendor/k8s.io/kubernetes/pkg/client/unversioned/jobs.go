@@ -18,10 +18,7 @@ package unversioned
 
 import (
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/latest"
 	"k8s.io/kubernetes/pkg/apis/extensions"
-	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/watch"
 )
 
@@ -32,12 +29,12 @@ type JobsNamespacer interface {
 
 // JobInterface exposes methods to work on Job resources.
 type JobInterface interface {
-	List(label labels.Selector, field fields.Selector) (*extensions.JobList, error)
+	List(opts api.ListOptions) (*extensions.JobList, error)
 	Get(name string) (*extensions.Job, error)
 	Create(job *extensions.Job) (*extensions.Job, error)
 	Update(job *extensions.Job) (*extensions.Job, error)
 	Delete(name string, options *api.DeleteOptions) error
-	Watch(label labels.Selector, field fields.Selector, resourceVersion string) (watch.Interface, error)
+	Watch(opts api.ListOptions) (watch.Interface, error)
 	UpdateStatus(job *extensions.Job) (*extensions.Job, error)
 }
 
@@ -56,9 +53,9 @@ func newJobs(c *ExtensionsClient, namespace string) *jobs {
 var _ JobInterface = &jobs{}
 
 // List returns a list of jobs that match the label and field selectors.
-func (c *jobs) List(label labels.Selector, field fields.Selector) (result *extensions.JobList, err error) {
+func (c *jobs) List(opts api.ListOptions) (result *extensions.JobList, err error) {
 	result = &extensions.JobList{}
-	err = c.r.Get().Namespace(c.ns).Resource("jobs").LabelsSelectorParam(label).FieldsSelectorParam(field).Do().Into(result)
+	err = c.r.Get().Namespace(c.ns).Resource("jobs").VersionedParams(&opts, api.ParameterCodec).Do().Into(result)
 	return
 }
 
@@ -85,31 +82,85 @@ func (c *jobs) Update(job *extensions.Job) (result *extensions.Job, err error) {
 
 // Delete deletes a job, returns error if one occurs.
 func (c *jobs) Delete(name string, options *api.DeleteOptions) (err error) {
-	if options == nil {
-		return c.r.Delete().Namespace(c.ns).Resource("jobs").Name(name).Do().Error()
-	}
-
-	body, err := api.Scheme.EncodeToVersion(options, latest.GroupOrDie("").GroupVersion)
-	if err != nil {
-		return err
-	}
-	return c.r.Delete().Namespace(c.ns).Resource("jobs").Name(name).Body(body).Do().Error()
+	return c.r.Delete().Namespace(c.ns).Resource("jobs").Name(name).Body(options).Do().Error()
 }
 
 // Watch returns a watch.Interface that watches the requested jobs.
-func (c *jobs) Watch(label labels.Selector, field fields.Selector, resourceVersion string) (watch.Interface, error) {
+func (c *jobs) Watch(opts api.ListOptions) (watch.Interface, error) {
 	return c.r.Get().
 		Prefix("watch").
 		Namespace(c.ns).
 		Resource("jobs").
-		Param("resourceVersion", resourceVersion).
-		LabelsSelectorParam(label).
-		FieldsSelectorParam(field).
+		VersionedParams(&opts, api.ParameterCodec).
 		Watch()
 }
 
 // UpdateStatus takes the name of the job and the new status.  Returns the server's representation of the job, and an error, if it occurs.
 func (c *jobs) UpdateStatus(job *extensions.Job) (result *extensions.Job, err error) {
+	result = &extensions.Job{}
+	err = c.r.Put().Namespace(c.ns).Resource("jobs").Name(job.Name).SubResource("status").Body(job).Do().Into(result)
+	return
+}
+
+// jobsV1 implements JobsNamespacer interface using BatchClient internally
+type jobsV1 struct {
+	r  *BatchClient
+	ns string
+}
+
+// newJobsV1 returns a jobsV1
+func newJobsV1(c *BatchClient, namespace string) *jobsV1 {
+	return &jobsV1{c, namespace}
+}
+
+// Ensure statically that jobsV1 implements JobInterface.
+var _ JobInterface = &jobsV1{}
+
+// List returns a list of jobs that match the label and field selectors.
+func (c *jobsV1) List(opts api.ListOptions) (result *extensions.JobList, err error) {
+	result = &extensions.JobList{}
+	err = c.r.Get().Namespace(c.ns).Resource("jobs").VersionedParams(&opts, api.ParameterCodec).Do().Into(result)
+	return
+}
+
+// Get returns information about a particular job.
+func (c *jobsV1) Get(name string) (result *extensions.Job, err error) {
+	result = &extensions.Job{}
+	err = c.r.Get().Namespace(c.ns).Resource("jobs").Name(name).Do().Into(result)
+	return
+}
+
+// Create creates a new job.
+func (c *jobsV1) Create(job *extensions.Job) (result *extensions.Job, err error) {
+	result = &extensions.Job{}
+	err = c.r.Post().Namespace(c.ns).Resource("jobs").Body(job).Do().Into(result)
+	return
+}
+
+// Update updates an existing job.
+func (c *jobsV1) Update(job *extensions.Job) (result *extensions.Job, err error) {
+	result = &extensions.Job{}
+	err = c.r.Put().Namespace(c.ns).Resource("jobs").Name(job.Name).Body(job).Do().Into(result)
+	return
+}
+
+// Delete deletes a job, returns error if one occurs.
+func (c *jobsV1) Delete(name string, options *api.DeleteOptions) (err error) {
+	return c.r.Delete().Namespace(c.ns).Resource("jobs").Name(name).Body(options).Do().Error()
+}
+
+// Watch returns a watch.Interface that watches the requested jobs.
+func (c *jobsV1) Watch(opts api.ListOptions) (watch.Interface, error) {
+	return c.r.Get().
+		Prefix("watch").
+		Namespace(c.ns).
+		Resource("jobs").
+		VersionedParams(&opts, api.ParameterCodec).
+		Watch()
+}
+
+// UpdateStatus takes the name of the job and the new status.  Returns the server's representation of the job, and an error, if it occurs.
+func (c *jobsV1) UpdateStatus(job *extensions.Job) (result *extensions.Job, err error) {
 	result = &extensions.Job{}
 	err = c.r.Put().Namespace(c.ns).Resource("jobs").Name(job.Name).SubResource("status").Body(job).Do().Into(result)
 	return

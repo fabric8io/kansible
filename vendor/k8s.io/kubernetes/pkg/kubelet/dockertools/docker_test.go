@@ -28,14 +28,18 @@ import (
 
 	"github.com/docker/docker/pkg/jsonmessage"
 	docker "github.com/fsouza/go-dockerclient"
-	cadvisorApi "github.com/google/cadvisor/info/v1"
+	cadvisorapi "github.com/google/cadvisor/info/v1"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/client/record"
 	"k8s.io/kubernetes/pkg/credentialprovider"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
+	containertest "k8s.io/kubernetes/pkg/kubelet/container/testing"
 	"k8s.io/kubernetes/pkg/kubelet/network"
+	nettest "k8s.io/kubernetes/pkg/kubelet/network/testing"
+	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 	"k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util"
+	hashutil "k8s.io/kubernetes/pkg/util/hash"
+	"k8s.io/kubernetes/pkg/util/parsers"
 )
 
 func verifyCalls(t *testing.T, fakeDocker *FakeDockerClient, calls []string) {
@@ -58,21 +62,36 @@ func verifyStringArrayEquals(t *testing.T, actual, expected []string) {
 	}
 }
 
+func findPodContainer(dockerContainers []*docker.APIContainers, podFullName string, uid types.UID, containerName string) (*docker.APIContainers, bool, uint64) {
+	for _, dockerContainer := range dockerContainers {
+		if len(dockerContainer.Names) == 0 {
+			continue
+		}
+		dockerName, hash, err := ParseDockerName(dockerContainer.Names[0])
+		if err != nil {
+			continue
+		}
+		if dockerName.PodFullName == podFullName &&
+			(uid == "" || dockerName.PodUID == uid) &&
+			dockerName.ContainerName == containerName {
+			return dockerContainer, true, hash
+		}
+	}
+	return nil, false, 0
+}
+
 func TestGetContainerID(t *testing.T) {
 	fakeDocker := &FakeDockerClient{}
-	fakeDocker.ContainerList = []docker.APIContainers{
+	fakeDocker.SetFakeRunningContainers([]*docker.Container{
 		{
-			ID:    "foobar",
-			Names: []string{"/k8s_foo_qux_ns_1234_42"},
+			ID:   "foobar",
+			Name: "/k8s_foo_qux_ns_1234_42",
 		},
 		{
-			ID:    "barbar",
-			Names: []string{"/k8s_bar_qux_ns_2565_42"},
+			ID:   "barbar",
+			Name: "/k8s_bar_qux_ns_2565_42",
 		},
-	}
-	fakeDocker.Container = &docker.Container{
-		ID: "foobar",
-	}
+	})
 
 	dockerContainers, err := GetKubeletDockerContainers(fakeDocker, false)
 	if err != nil {
@@ -82,13 +101,14 @@ func TestGetContainerID(t *testing.T) {
 		t.Errorf("Expected %#v, Got %#v", fakeDocker.ContainerList, dockerContainers)
 	}
 	verifyCalls(t, fakeDocker, []string{"list"})
-	dockerContainer, found, _ := dockerContainers.FindPodContainer("qux_ns", "", "foo")
+
+	dockerContainer, found, _ := findPodContainer(dockerContainers, "qux_ns", "", "foo")
 	if dockerContainer == nil || !found {
 		t.Errorf("Failed to find container %#v", dockerContainer)
 	}
 
 	fakeDocker.ClearCalls()
-	dockerContainer, found, _ = dockerContainers.FindPodContainer("foobar", "", "foo")
+	dockerContainer, found, _ = findPodContainer(dockerContainers, "foobar", "", "foo")
 	verifyCalls(t, fakeDocker, []string{})
 	if dockerContainer != nil || found {
 		t.Errorf("Should not have found container %#v", dockerContainer)
@@ -98,10 +118,10 @@ func TestGetContainerID(t *testing.T) {
 func verifyPackUnpack(t *testing.T, podNamespace, podUID, podName, containerName string) {
 	container := &api.Container{Name: containerName}
 	hasher := adler32.New()
-	util.DeepHashObject(hasher, *container)
+	hashutil.DeepHashObject(hasher, *container)
 	computedHash := uint64(hasher.Sum32())
 	podFullName := fmt.Sprintf("%s_%s", podName, podNamespace)
-	_, name := BuildDockerName(KubeletContainerName{podFullName, types.UID(podUID), container.Name}, container)
+	_, name, _ := BuildDockerName(KubeletContainerName{podFullName, types.UID(podUID), container.Name}, container)
 	returned, hash, err := ParseDockerName(name)
 	if err != nil {
 		t.Errorf("Failed to parse Docker container name %q: %v", name, err)
@@ -142,7 +162,16 @@ func TestVersion(t *testing.T) {
 	if err != nil {
 		t.Errorf("got error while getting docker server version - %s", err)
 	}
-	expectedVersion, _ := docker.NewAPIVersion("1.15")
+	expectedVersion, _ := docker.NewAPIVersion("1.1.3")
+	if e, a := expectedVersion.String(), version.String(); e != a {
+		t.Errorf("invalid docker server version. expected: %v, got: %v", e, a)
+	}
+
+	version, err = manager.APIVersion()
+	if err != nil {
+		t.Errorf("got error while getting docker server version - %s", err)
+	}
+	expectedVersion, _ = docker.NewAPIVersion("1.15")
 	if e, a := expectedVersion.String(), version.String(); e != a {
 		t.Errorf("invalid docker server version. expected: %v, got: %v", e, a)
 	}
@@ -171,10 +200,10 @@ func TestExecSupportNotExists(t *testing.T) {
 
 func TestDockerContainerCommand(t *testing.T) {
 	runner := &DockerManager{}
-	containerID := "1234"
+	containerID := kubecontainer.DockerID("1234").ContainerID()
 	command := []string{"ls"}
 	cmd, _ := runner.getRunInContainerCommand(containerID, command)
-	if cmd.Dir != "/var/lib/docker/execdriver/native/"+containerID {
+	if cmd.Dir != "/var/lib/docker/execdriver/native/"+containerID.ID {
 		t.Errorf("unexpected command CWD: %s", cmd.Dir)
 	}
 	if !reflect.DeepEqual(cmd.Args, []string{"/usr/sbin/nsinit", "exec", "ls"}) {
@@ -187,16 +216,16 @@ func TestParseImageName(t *testing.T) {
 		name      string
 		tag       string
 	}{
-		{"ubuntu", "ubuntu", ""},
+		{"ubuntu", "ubuntu", "latest"},
 		{"ubuntu:2342", "ubuntu", "2342"},
 		{"ubuntu:latest", "ubuntu", "latest"},
 		{"foo/bar:445566", "foo/bar", "445566"},
-		{"registry.example.com:5000/foobar", "registry.example.com:5000/foobar", ""},
+		{"registry.example.com:5000/foobar", "registry.example.com:5000/foobar", "latest"},
 		{"registry.example.com:5000/foobar:5342", "registry.example.com:5000/foobar", "5342"},
 		{"registry.example.com:5000/foobar:latest", "registry.example.com:5000/foobar", "latest"},
 	}
 	for _, test := range tests {
-		name, tag := parseImageName(test.imageName)
+		name, tag := parsers.ParseImageName(test.imageName)
 		if name != test.name || tag != test.tag {
 			t.Errorf("Expected name/tag: %s/%s, got %s/%s", test.name, test.tag, name, tag)
 		}
@@ -256,7 +285,7 @@ func TestPullWithJSONError(t *testing.T) {
 		"Bad gateway": {
 			"ubuntu",
 			&jsonmessage.JSONError{Code: 502, Message: "<!doctype html>\n<html class=\"no-js\" lang=\"\">\n    <head>\n  </head>\n    <body>\n   <h1>Oops, there was an error!</h1>\n        <p>We have been contacted of this error, feel free to check out <a href=\"http://status.docker.com/\">status.docker.com</a>\n           to see if there is a bigger issue.</p>\n\n    </body>\n</html>"},
-			"because the registry is temporarily unavailable",
+			kubecontainer.RegistryUnavailable.Error(),
 		},
 	}
 	for i, test := range tests {
@@ -327,7 +356,7 @@ func TestPullWithSecrets(t *testing.T) {
 			[]string{`ubuntu:latest using {"username":"passed-user","password":"passed-password","email":"passed-email"}`},
 		},
 	}
-	for _, test := range tests {
+	for i, test := range tests {
 		builtInKeyRing := &credentialprovider.BasicDockerKeyring{}
 		builtInKeyRing.Add(test.builtInDockerConfig)
 
@@ -340,17 +369,17 @@ func TestPullWithSecrets(t *testing.T) {
 
 		err := dp.Pull(test.imageName, test.passedSecrets)
 		if err != nil {
-			t.Errorf("unexpected non-nil err: %s", err)
+			t.Errorf("%s: unexpected non-nil err: %s", i, err)
 			continue
 		}
 
 		if e, a := 1, len(fakeClient.pulled); e != a {
-			t.Errorf("%s: expected 1 pulled image, got %d: %v", test.imageName, a, fakeClient.pulled)
+			t.Errorf("%s: expected 1 pulled image, got %d: %v", i, a, fakeClient.pulled)
 			continue
 		}
 
 		if e, a := test.expectedPulls, fakeClient.pulled; !reflect.DeepEqual(e, a) {
-			t.Errorf("%s: expected pull of %v, but got %v", test.imageName, e, a)
+			t.Errorf("%s: expected pull of %v, but got %v", i, e, a)
 		}
 	}
 }
@@ -517,7 +546,7 @@ type containersByID []*kubecontainer.Container
 
 func (b containersByID) Len() int           { return len(b) }
 func (b containersByID) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
-func (b containersByID) Less(i, j int) bool { return b[i].ID < b[j].ID }
+func (b containersByID) Less(i, j int) bool { return b[i].ID.ID < b[j].ID.ID }
 
 func TestFindContainersByPod(t *testing.T) {
 	tests := []struct {
@@ -560,14 +589,16 @@ func TestFindContainersByPod(t *testing.T) {
 					Namespace: "ns",
 					Containers: []*kubecontainer.Container{
 						{
-							ID:   "foobar",
-							Name: "foobar",
-							Hash: 0x1234,
+							ID:    kubecontainer.DockerID("foobar").ContainerID(),
+							Name:  "foobar",
+							Hash:  0x1234,
+							State: kubecontainer.ContainerStateUnknown,
 						},
 						{
-							ID:   "baz",
-							Name: "baz",
-							Hash: 0x1234,
+							ID:    kubecontainer.DockerID("baz").ContainerID(),
+							Name:  "baz",
+							Hash:  0x1234,
+							State: kubecontainer.ContainerStateUnknown,
 						},
 					},
 				},
@@ -577,9 +608,10 @@ func TestFindContainersByPod(t *testing.T) {
 					Namespace: "ns",
 					Containers: []*kubecontainer.Container{
 						{
-							ID:   "barbar",
-							Name: "barbar",
-							Hash: 0x1234,
+							ID:    kubecontainer.DockerID("barbar").ContainerID(),
+							Name:  "barbar",
+							Hash:  0x1234,
+							State: kubecontainer.ContainerStateUnknown,
 						},
 					},
 				},
@@ -618,19 +650,22 @@ func TestFindContainersByPod(t *testing.T) {
 					Namespace: "ns",
 					Containers: []*kubecontainer.Container{
 						{
-							ID:   "foobar",
-							Name: "foobar",
-							Hash: 0x1234,
+							ID:    kubecontainer.DockerID("foobar").ContainerID(),
+							Name:  "foobar",
+							Hash:  0x1234,
+							State: kubecontainer.ContainerStateUnknown,
 						},
 						{
-							ID:   "barfoo",
-							Name: "barfoo",
-							Hash: 0x1234,
+							ID:    kubecontainer.DockerID("barfoo").ContainerID(),
+							Name:  "barfoo",
+							Hash:  0x1234,
+							State: kubecontainer.ContainerStateUnknown,
 						},
 						{
-							ID:   "baz",
-							Name: "baz",
-							Hash: 0x1234,
+							ID:    kubecontainer.DockerID("baz").ContainerID(),
+							Name:  "baz",
+							Hash:  0x1234,
+							State: kubecontainer.ContainerStateUnknown,
 						},
 					},
 				},
@@ -640,9 +675,10 @@ func TestFindContainersByPod(t *testing.T) {
 					Namespace: "ns",
 					Containers: []*kubecontainer.Container{
 						{
-							ID:   "barbar",
-							Name: "barbar",
-							Hash: 0x1234,
+							ID:    kubecontainer.DockerID("barbar").ContainerID(),
+							Name:  "barbar",
+							Hash:  0x1234,
+							State: kubecontainer.ContainerStateUnknown,
 						},
 					},
 				},
@@ -652,9 +688,10 @@ func TestFindContainersByPod(t *testing.T) {
 					Namespace: "ns",
 					Containers: []*kubecontainer.Container{
 						{
-							ID:   "bazbaz",
-							Name: "bazbaz",
-							Hash: 0x1234,
+							ID:    kubecontainer.DockerID("bazbaz").ContainerID(),
+							Name:  "bazbaz",
+							Hash:  0x1234,
+							State: kubecontainer.ContainerStateUnknown,
 						},
 					},
 				},
@@ -668,8 +705,9 @@ func TestFindContainersByPod(t *testing.T) {
 		},
 	}
 	fakeClient := &FakeDockerClient{}
-	np, _ := network.InitNetworkPlugin([]network.NetworkPlugin{}, "", network.NewFakeHost(nil))
-	containerManager := NewFakeDockerManager(fakeClient, &record.FakeRecorder{}, nil, nil, &cadvisorApi.MachineInfo{}, PodInfraContainerImage, 0, 0, "", kubecontainer.FakeOS{}, np, nil, nil)
+	np, _ := network.InitNetworkPlugin([]network.NetworkPlugin{}, "", nettest.NewFakeHost(nil))
+	// image back-off is set to nil, this test should not pull images
+	containerManager := NewFakeDockerManager(fakeClient, &record.FakeRecorder{}, nil, nil, &cadvisorapi.MachineInfo{}, kubetypes.PodInfraContainerImage, 0, 0, "", containertest.FakeOS{}, np, nil, nil, nil)
 	for i, test := range tests {
 		fakeClient.ContainerList = test.containerList
 		fakeClient.ExitedContainerList = test.exitedContainerList
@@ -800,6 +838,21 @@ func TestMilliCPUToQuota(t *testing.T) {
 			input:  int64(0),
 			quota:  int64(0),
 			period: int64(0),
+		},
+		{
+			input:  int64(5),
+			quota:  int64(1000),
+			period: int64(100000),
+		},
+		{
+			input:  int64(9),
+			quota:  int64(1000),
+			period: int64(100000),
+		},
+		{
+			input:  int64(10),
+			quota:  int64(1000),
+			period: int64(100000),
 		},
 		{
 			input:  int64(200),

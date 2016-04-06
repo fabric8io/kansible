@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker/pkg/mount"
 	"github.com/docker/docker/pkg/parsers"
 	zfs "github.com/mistifyio/go-zfs"
+	"github.com/opencontainers/runc/libcontainer/label"
 )
 
 type ZfsOptions struct {
@@ -185,6 +186,10 @@ func (d *Driver) Status() [][2]string {
 	}
 }
 
+func (d *Driver) GetMetadata(id string) (map[string]string, error) {
+	return nil, nil
+}
+
 func (d *Driver) cloneFilesystem(name, parentName string) error {
 	snapshotName := fmt.Sprintf("%d", time.Now().Nanosecond())
 	parentDataset := zfs.Dataset{Name: parentName}
@@ -268,14 +273,15 @@ func (d *Driver) Remove(id string) error {
 func (d *Driver) Get(id, mountLabel string) (string, error) {
 	mountpoint := d.MountPath(id)
 	filesystem := d.ZfsPath(id)
-	log.Debugf(`[zfs] mount("%s", "%s", "%s")`, filesystem, mountpoint, mountLabel)
+	options := label.FormatMountLabel("", mountLabel)
+	log.Debugf(`[zfs] mount("%s", "%s", "%s")`, filesystem, mountpoint, options)
 
 	// Create the target directories if they don't exist
 	if err := os.MkdirAll(mountpoint, 0755); err != nil && !os.IsExist(err) {
 		return "", err
 	}
 
-	err := mount.Mount(filesystem, mountpoint, "zfs", mountLabel)
+	err := mount.Mount(filesystem, mountpoint, "zfs", options)
 	if err != nil {
 		return "", fmt.Errorf("error creating zfs mount of %s to %s: %v", filesystem, mountpoint, err)
 	}

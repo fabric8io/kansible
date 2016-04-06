@@ -24,7 +24,6 @@ import (
 	"k8s.io/kubernetes/pkg/registry/generic"
 	etcdgeneric "k8s.io/kubernetes/pkg/registry/generic/etcd"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/storage"
 )
 
 type REST struct {
@@ -32,8 +31,13 @@ type REST struct {
 }
 
 // NewREST returns a RESTStorage object that will work against events.
-func NewREST(s storage.Interface, ttl uint64) *REST {
+func NewREST(opts generic.RESTOptions, ttl uint64) *REST {
 	prefix := "/events"
+
+	// We explicitly do NOT do any decoration here - switching on Cacher
+	// for events will lead to too high memory consumption.
+	storageInterface := opts.Storage
+
 	store := &etcdgeneric.Etcd{
 		NewFunc:     func() runtime.Object { return &api.Event{} },
 		NewListFunc: func() runtime.Object { return &api.EventList{} },
@@ -52,12 +56,13 @@ func NewREST(s storage.Interface, ttl uint64) *REST {
 		TTLFunc: func(runtime.Object, uint64, bool) (uint64, error) {
 			return ttl, nil
 		},
-		EndpointName: "events",
+		QualifiedResource:       api.Resource("events"),
+		DeleteCollectionWorkers: opts.DeleteCollectionWorkers,
 
 		CreateStrategy: event.Strategy,
 		UpdateStrategy: event.Strategy,
 
-		Storage: s,
+		Storage: storageInterface,
 	}
 	return &REST{store}
 }

@@ -20,11 +20,11 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/fields"
 	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/registry/cachesize"
 	"k8s.io/kubernetes/pkg/registry/generic"
 	etcdgeneric "k8s.io/kubernetes/pkg/registry/generic/etcd"
 	"k8s.io/kubernetes/pkg/registry/persistentvolume"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/storage"
 )
 
 type REST struct {
@@ -32,11 +32,16 @@ type REST struct {
 }
 
 // NewREST returns a RESTStorage object that will work against persistent volumes.
-func NewREST(s storage.Interface) (*REST, *StatusREST) {
+func NewREST(opts generic.RESTOptions) (*REST, *StatusREST) {
 	prefix := "/persistentvolumes"
+
+	newListFunc := func() runtime.Object { return &api.PersistentVolumeList{} }
+	storageInterface := opts.Decorator(
+		opts.Storage, cachesize.GetWatchCacheSizeByResource(cachesize.PersistentVolumes), &api.PersistentVolume{}, prefix, persistentvolume.Strategy, newListFunc)
+
 	store := &etcdgeneric.Etcd{
 		NewFunc:     func() runtime.Object { return &api.PersistentVolume{} },
-		NewListFunc: func() runtime.Object { return &api.PersistentVolumeList{} },
+		NewListFunc: newListFunc,
 		KeyRootFunc: func(ctx api.Context) string {
 			return prefix
 		},
@@ -49,13 +54,14 @@ func NewREST(s storage.Interface) (*REST, *StatusREST) {
 		PredicateFunc: func(label labels.Selector, field fields.Selector) generic.Matcher {
 			return persistentvolume.MatchPersistentVolumes(label, field)
 		},
-		EndpointName: "persistentvolume",
+		QualifiedResource:       api.Resource("persistentvolumes"),
+		DeleteCollectionWorkers: opts.DeleteCollectionWorkers,
 
 		CreateStrategy:      persistentvolume.Strategy,
 		UpdateStrategy:      persistentvolume.Strategy,
 		ReturnDeletedObject: true,
 
-		Storage: s,
+		Storage: storageInterface,
 	}
 
 	statusStore := *store

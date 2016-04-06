@@ -19,12 +19,12 @@ package kubelet
 import (
 	"github.com/golang/glog"
 	"github.com/google/cadvisor/events"
-	cadvisorApi "github.com/google/cadvisor/info/v1"
+	cadvisorapi "github.com/google/cadvisor/info/v1"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/client/record"
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
-	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/util/runtime"
 )
 
 type OOMWatcher interface {
@@ -48,8 +48,8 @@ const systemOOMEvent = "SystemOOM"
 // Watches cadvisor for system oom's and records an event for every system oom encountered.
 func (ow *realOOMWatcher) Start(ref *api.ObjectReference) error {
 	request := events.Request{
-		EventType: map[cadvisorApi.EventType]bool{
-			cadvisorApi.EventOom: true,
+		EventType: map[cadvisorapi.EventType]bool{
+			cadvisorapi.EventOom: true,
 		},
 		ContainerName:        "/",
 		IncludeSubcontainers: false,
@@ -60,11 +60,11 @@ func (ow *realOOMWatcher) Start(ref *api.ObjectReference) error {
 	}
 
 	go func() {
-		defer util.HandleCrash()
+		defer runtime.HandleCrash()
 
 		for event := range eventChannel.GetChannel() {
 			glog.V(2).Infof("Got sys oom event from cadvisor: %v", event)
-			ow.recorder.PastEventf(ref, unversioned.Time{Time: event.Timestamp}, systemOOMEvent, "System OOM encountered")
+			ow.recorder.PastEventf(ref, unversioned.Time{Time: event.Timestamp}, api.EventTypeWarning, systemOOMEvent, "System OOM encountered")
 		}
 		glog.Errorf("Unexpectedly stopped receiving OOM notifications from cAdvisor")
 	}()

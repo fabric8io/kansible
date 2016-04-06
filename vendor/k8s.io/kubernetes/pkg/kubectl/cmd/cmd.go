@@ -21,6 +21,7 @@ import (
 
 	"github.com/golang/glog"
 	cmdconfig "k8s.io/kubernetes/pkg/kubectl/cmd/config"
+	"k8s.io/kubernetes/pkg/kubectl/cmd/rollout"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/util"
 
@@ -109,19 +110,32 @@ __custom_func() {
     esac
 }
 `
+
+	// If you add a resource to this list, please also take a look at pkg/kubectl/kubectl.go
+	// and add a short forms entry in expandResourceShortcut() when appropriate.
 	valid_resources = `Valid resource types include:
-   * pods (aka 'po')
-   * replicationcontrollers (aka 'rc')
+   * componentstatuses (aka 'cs')
+   * configmaps
    * daemonsets (aka 'ds')
-   * services (aka 'svc')
+   * deployments
    * events (aka 'ev')
+   * endpoints (aka 'ep')
+   * horizontalpodautoscalers (aka 'hpa')
+   * ingress (aka 'ing')
+   * jobs
+   * limitranges (aka 'limits')
    * nodes (aka 'no')
    * namespaces (aka 'ns')
-   * secrets
+   * pods (aka 'po')
    * persistentvolumes (aka 'pv')
    * persistentvolumeclaims (aka 'pvc')
-   * limitranges (aka 'limits')
+   * quota
    * resourcequotas (aka 'quota')
+   * replicasets (aka 'rs')
+   * replicationcontrollers (aka 'rc')
+   * secrets
+   * serviceaccounts
+   * services (aka 'svc')
 `
 )
 
@@ -139,6 +153,7 @@ Find more information at https://github.com/kubernetes/kubernetes.`,
 	}
 
 	f.BindFlags(cmds.PersistentFlags())
+	f.BindExternalFlags(cmds.PersistentFlags())
 
 	// From this point and forward we get warnings on flags that contain "_" separators
 	cmds.SetGlobalNormalizationFunc(util.WarnWordSepNormalizeFunc)
@@ -153,9 +168,12 @@ Find more information at https://github.com/kubernetes/kubernetes.`,
 	cmds.AddCommand(NewCmdApply(f, out))
 
 	cmds.AddCommand(NewCmdNamespace(out))
-	cmds.AddCommand(NewCmdLog(f, out))
+	cmds.AddCommand(NewCmdLogs(f, out))
 	cmds.AddCommand(NewCmdRollingUpdate(f, out))
 	cmds.AddCommand(NewCmdScale(f, out))
+	cmds.AddCommand(NewCmdCordon(f, out))
+	cmds.AddCommand(NewCmdDrain(f, out))
+	cmds.AddCommand(NewCmdUncordon(f, out))
 
 	cmds.AddCommand(NewCmdAttach(f, in, out, err))
 	cmds.AddCommand(NewCmdExec(f, in, out, err))
@@ -166,6 +184,7 @@ Find more information at https://github.com/kubernetes/kubernetes.`,
 	cmds.AddCommand(NewCmdStop(f, out))
 	cmds.AddCommand(NewCmdExposeService(f, out))
 	cmds.AddCommand(NewCmdAutoscale(f, out))
+	cmds.AddCommand(rollout.NewCmdRollout(f, out))
 
 	cmds.AddCommand(NewCmdLabel(f, out))
 	cmds.AddCommand(NewCmdAnnotate(f, out))
@@ -174,6 +193,8 @@ Find more information at https://github.com/kubernetes/kubernetes.`,
 	cmds.AddCommand(NewCmdClusterInfo(f, out))
 	cmds.AddCommand(NewCmdApiVersions(f, out))
 	cmds.AddCommand(NewCmdVersion(f, out))
+	cmds.AddCommand(NewCmdExplain(f, out))
+	cmds.AddCommand(NewCmdConvert(f, out))
 
 	return cmds
 }

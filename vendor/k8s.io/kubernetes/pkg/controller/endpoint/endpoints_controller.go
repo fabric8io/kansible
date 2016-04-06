@@ -16,29 +16,30 @@ limitations under the License.
 
 // CAUTION: If you update code in this file, you may need to also update code
 //          in contrib/mesos/pkg/service/endpoints_controller.go
-package endpointcontroller
+package endpoint
 
 import (
-	"fmt"
 	"reflect"
 	"time"
 
+	"encoding/json"
+	"github.com/golang/glog"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/endpoints"
 	"k8s.io/kubernetes/pkg/api/errors"
+	podutil "k8s.io/kubernetes/pkg/api/pod"
+	utilpod "k8s.io/kubernetes/pkg/api/pod"
 	"k8s.io/kubernetes/pkg/client/cache"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
+	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/controller/framework"
-	"k8s.io/kubernetes/pkg/fields"
 	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util"
+	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
 	"k8s.io/kubernetes/pkg/util/sets"
+	"k8s.io/kubernetes/pkg/util/wait"
 	"k8s.io/kubernetes/pkg/util/workqueue"
 	"k8s.io/kubernetes/pkg/watch"
-
-	"github.com/golang/glog"
 )
 
 const (
@@ -46,6 +47,10 @@ const (
 	// often. Higher numbers = lower CPU/network load; lower numbers =
 	// shorter amount of time before a mistaken endpoint is corrected.
 	FullServiceResyncPeriod = 30 * time.Second
+
+	// We must avoid syncing service until the pod store has synced. If it hasn't synced, to
+	// avoid a hot loop, we'll wait this long between checks.
+	PodStoreSyncedPollPeriod = 100 * time.Millisecond
 )
 
 var (
@@ -53,7 +58,7 @@ var (
 )
 
 // NewEndpointController returns a new *EndpointController.
-func NewEndpointController(client *client.Client, resyncPeriod controller.ResyncPeriodFunc) *EndpointController {
+func NewEndpointController(client *clientset.Clientset, resyncPeriod controller.ResyncPeriodFunc) *EndpointController {
 	e := &EndpointController{
 		client: client,
 		queue:  workqueue.New(),
@@ -61,11 +66,11 @@ func NewEndpointController(client *client.Client, resyncPeriod controller.Resync
 
 	e.serviceStore.Store, e.serviceController = framework.NewInformer(
 		&cache.ListWatch{
-			ListFunc: func() (runtime.Object, error) {
-				return e.client.Services(api.NamespaceAll).List(labels.Everything())
+			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
+				return e.client.Core().Services(api.NamespaceAll).List(options)
 			},
-			WatchFunc: func(rv string) (watch.Interface, error) {
-				return e.client.Services(api.NamespaceAll).Watch(labels.Everything(), fields.Everything(), rv)
+			WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
+				return e.client.Core().Services(api.NamespaceAll).Watch(options)
 			},
 		},
 		&api.Service{},
@@ -82,11 +87,11 @@ func NewEndpointController(client *client.Client, resyncPeriod controller.Resync
 
 	e.podStore.Store, e.podController = framework.NewInformer(
 		&cache.ListWatch{
-			ListFunc: func() (runtime.Object, error) {
-				return e.client.Pods(api.NamespaceAll).List(labels.Everything(), fields.Everything())
+			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
+				return e.client.Core().Pods(api.NamespaceAll).List(options)
 			},
-			WatchFunc: func(rv string) (watch.Interface, error) {
-				return e.client.Pods(api.NamespaceAll).Watch(labels.Everything(), fields.Everything(), rv)
+			WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
+				return e.client.Core().Pods(api.NamespaceAll).Watch(options)
 			},
 		},
 		&api.Pod{},
@@ -97,13 +102,14 @@ func NewEndpointController(client *client.Client, resyncPeriod controller.Resync
 			DeleteFunc: e.deletePod,
 		},
 	)
+	e.podStoreSynced = e.podController.HasSynced
 
 	return e
 }
 
 // EndpointController manages selector-based service endpoints.
 type EndpointController struct {
-	client *client.Client
+	client *clientset.Clientset
 
 	serviceStore cache.StoreToServiceLister
 	podStore     cache.StoreToPodLister
@@ -119,19 +125,22 @@ type EndpointController struct {
 	// controllers.
 	serviceController *framework.Controller
 	podController     *framework.Controller
+	// podStoreSynced returns true if the pod store has been synced at least once.
+	// Added as a member to the struct to allow injection for testing.
+	podStoreSynced func() bool
 }
 
 // Runs e; will not return until stopCh is closed. workers determines how many
 // endpoints will be handled in parallel.
 func (e *EndpointController) Run(workers int, stopCh <-chan struct{}) {
-	defer util.HandleCrash()
+	defer utilruntime.HandleCrash()
 	go e.serviceController.Run(stopCh)
 	go e.podController.Run(stopCh)
 	for i := 0; i < workers; i++ {
-		go util.Until(e.worker, time.Second, stopCh)
+		go wait.Until(e.worker, time.Second, stopCh)
 	}
 	go func() {
-		defer util.HandleCrash()
+		defer utilruntime.HandleCrash()
 		time.Sleep(5 * time.Minute) // give time for our cache to fill
 		e.checkLeftoverEndpoints()
 	}()
@@ -187,7 +196,8 @@ func (e *EndpointController) updatePod(old, cur interface{}) {
 
 	oldPod := cur.(*api.Pod)
 	// Only need to get the old services if the labels changed.
-	if !reflect.DeepEqual(newPod.Labels, oldPod.Labels) {
+	if !reflect.DeepEqual(newPod.Labels, oldPod.Labels) ||
+		!hostNameAndDomainAnnotationsAreEqual(newPod.Annotations, oldPod.Annotations) {
 		oldServices, err := e.getPodServiceMemberships(oldPod)
 		if err != nil {
 			glog.Errorf("Unable to get pod %v/%v's service memberships: %v", oldPod.Namespace, oldPod.Name, err)
@@ -198,6 +208,17 @@ func (e *EndpointController) updatePod(old, cur interface{}) {
 	for key := range services {
 		e.queue.Add(key)
 	}
+}
+
+func hostNameAndDomainAnnotationsAreEqual(annotation1, annotation2 map[string]string) bool {
+	if annotation1 == nil {
+		annotation1 = map[string]string{}
+	}
+	if annotation2 == nil {
+		annotation2 = map[string]string{}
+	}
+	return annotation1[utilpod.PodHostnameAnnotation] == annotation2[utilpod.PodHostnameAnnotation] &&
+		annotation1[utilpod.PodSubdomainAnnotation] == annotation2[utilpod.PodSubdomainAnnotation]
 }
 
 // When a pod is deleted, enqueue the services the pod used to be a member of.
@@ -255,6 +276,15 @@ func (e *EndpointController) syncService(key string) {
 	defer func() {
 		glog.V(4).Infof("Finished syncing service %q endpoints. (%v)", key, time.Now().Sub(startTime))
 	}()
+
+	if !e.podStoreSynced() {
+		// Sleep so we give the pod reflector goroutine a chance to run.
+		time.Sleep(PodStoreSyncedPollPeriod)
+		glog.Infof("Waiting for pods controller to sync, requeuing rc %v", key)
+		e.queue.Add(key)
+		return
+	}
+
 	obj, exists, err := e.serviceStore.Store.GetByKey(key)
 	if err != nil || !exists {
 		// Delete the corresponding endpoint, as the service has been deleted.
@@ -268,7 +298,7 @@ func (e *EndpointController) syncService(key string) {
 			// Don't retry, as the key isn't going to magically become understandable.
 			return
 		}
-		err = e.client.Endpoints(namespace).Delete(name)
+		err = e.client.Endpoints(namespace).Delete(name, nil)
 		if err != nil && !errors.IsNotFound(err) {
 			glog.Errorf("Error deleting endpoint %q: %v", key, err)
 			e.queue.Add(key) // Retry
@@ -294,6 +324,8 @@ func (e *EndpointController) syncService(key string) {
 	}
 
 	subsets := []api.EndpointSubset{}
+	podHostNames := map[string]endpoints.HostRecord{}
+
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 
@@ -302,7 +334,7 @@ func (e *EndpointController) syncService(key string) {
 
 			portName := servicePort.Name
 			portProto := servicePort.Protocol
-			portNum, err := findPort(pod, servicePort)
+			portNum, err := podutil.FindPort(pod, servicePort)
 			if err != nil {
 				glog.V(4).Infof("Failed to find port for service %s/%s: %v", service.Namespace, service.Name, err)
 				continue
@@ -316,14 +348,26 @@ func (e *EndpointController) syncService(key string) {
 				continue
 			}
 
+			hostname := pod.Annotations[utilpod.PodHostnameAnnotation]
+			if len(hostname) > 0 &&
+				pod.Annotations[utilpod.PodSubdomainAnnotation] == service.Name &&
+				service.Namespace == pod.Namespace {
+				hostRecord := endpoints.HostRecord{
+					HostName: hostname,
+				}
+				podHostNames[string(pod.Status.PodIP)] = hostRecord
+			}
+
 			epp := api.EndpointPort{Name: portName, Port: portNum, Protocol: portProto}
-			epa := api.EndpointAddress{IP: pod.Status.PodIP, TargetRef: &api.ObjectReference{
-				Kind:            "Pod",
-				Namespace:       pod.ObjectMeta.Namespace,
-				Name:            pod.ObjectMeta.Name,
-				UID:             pod.ObjectMeta.UID,
-				ResourceVersion: pod.ObjectMeta.ResourceVersion,
-			}}
+			epa := api.EndpointAddress{
+				IP: pod.Status.PodIP,
+				TargetRef: &api.ObjectReference{
+					Kind:            "Pod",
+					Namespace:       pod.ObjectMeta.Namespace,
+					Name:            pod.ObjectMeta.Name,
+					UID:             pod.ObjectMeta.UID,
+					ResourceVersion: pod.ObjectMeta.ResourceVersion,
+				}}
 			if api.IsPodReady(pod) {
 				subsets = append(subsets, api.EndpointSubset{
 					Addresses: []api.EndpointAddress{epa},
@@ -356,14 +400,38 @@ func (e *EndpointController) syncService(key string) {
 			return
 		}
 	}
-	if reflect.DeepEqual(currentEndpoints.Subsets, subsets) && reflect.DeepEqual(currentEndpoints.Labels, service.Labels) {
+
+	serializedPodHostNames := ""
+	if len(podHostNames) > 0 {
+		b, err := json.Marshal(podHostNames)
+		if err != nil {
+			glog.Errorf("Error updating endpoints. Marshalling of hostnames failed.: %v", err)
+			e.queue.Add(key) // Retry
+			return
+		}
+		serializedPodHostNames = string(b)
+	}
+
+	podHostNamesAreEqual := verifyPodHostNamesAreEqual(serializedPodHostNames, currentEndpoints.Annotations)
+
+	newAnnotations := make(map[string]string)
+	newAnnotations[endpoints.PodHostnamesAnnotation] = serializedPodHostNames
+	if reflect.DeepEqual(currentEndpoints.Subsets, subsets) &&
+		reflect.DeepEqual(currentEndpoints.Labels, service.Labels) && podHostNamesAreEqual {
 		glog.V(5).Infof("endpoints are equal for %s/%s, skipping update", service.Namespace, service.Name)
 		return
 	}
 	newEndpoints := currentEndpoints
 	newEndpoints.Subsets = subsets
 	newEndpoints.Labels = service.Labels
-
+	if newEndpoints.Annotations == nil {
+		newEndpoints.Annotations = make(map[string]string)
+	}
+	if len(serializedPodHostNames) == 0 {
+		delete(newEndpoints.Annotations, endpoints.PodHostnamesAnnotation)
+	} else {
+		newEndpoints.Annotations[endpoints.PodHostnamesAnnotation] = serializedPodHostNames
+	}
 	if len(currentEndpoints.ResourceVersion) == 0 {
 		// No previous endpoints, create them
 		_, err = e.client.Endpoints(service.Namespace).Create(newEndpoints)
@@ -377,6 +445,14 @@ func (e *EndpointController) syncService(key string) {
 	}
 }
 
+func verifyPodHostNamesAreEqual(newPodHostNames string, oldAnnotations map[string]string) bool {
+	oldPodHostNames := ""
+	if oldAnnotations != nil {
+		oldPodHostNames = oldAnnotations[endpoints.PodHostnamesAnnotation]
+	}
+	return oldPodHostNames == newPodHostNames
+}
+
 // checkLeftoverEndpoints lists all currently existing endpoints and adds their
 // service to the queue. This will detect endpoints that exist with no
 // corresponding service; these endpoints need to be deleted. We only need to
@@ -384,7 +460,7 @@ func (e *EndpointController) syncService(key string) {
 // some stragglers could have been left behind if the endpoint controller
 // reboots).
 func (e *EndpointController) checkLeftoverEndpoints() {
-	list, err := e.client.Endpoints(api.NamespaceAll).List(labels.Everything())
+	list, err := e.client.Endpoints(api.NamespaceAll).List(api.ListOptions{})
 	if err != nil {
 		glog.Errorf("Unable to list endpoints (%v); orphaned endpoints will not be cleaned up. (They're pretty harmless, but you can restart this component if you want another attempt made.)", err)
 		return
@@ -398,27 +474,4 @@ func (e *EndpointController) checkLeftoverEndpoints() {
 		}
 		e.queue.Add(key)
 	}
-}
-
-// findPort locates the container port for the given pod and portName.  If the
-// targetPort is a number, use that.  If the targetPort is a string, look that
-// string up in all named ports in all containers in the target pod.  If no
-// match is found, fail.
-func findPort(pod *api.Pod, svcPort *api.ServicePort) (int, error) {
-	portName := svcPort.TargetPort
-	switch portName.Kind {
-	case util.IntstrString:
-		name := portName.StrVal
-		for _, container := range pod.Spec.Containers {
-			for _, port := range container.Ports {
-				if port.Name == name && port.Protocol == svcPort.Protocol {
-					return port.ContainerPort, nil
-				}
-			}
-		}
-	case util.IntstrInt:
-		return portName.IntVal, nil
-	}
-
-	return 0, fmt.Errorf("no suitable port for manifest: %s", pod.UID)
 }

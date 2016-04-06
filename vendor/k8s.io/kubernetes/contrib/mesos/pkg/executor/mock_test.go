@@ -25,6 +25,15 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/dockertools"
 )
 
+type mockKubeAPI struct {
+	mock.Mock
+}
+
+func (m *mockKubeAPI) killPod(ns, name string) error {
+	args := m.Called(ns, name)
+	return args.Error(0)
+}
+
 type MockExecutorDriver struct {
 	mock.Mock
 }
@@ -64,10 +73,10 @@ func (m *MockExecutorDriver) SendFrameworkMessage(msg string) (mesosproto.Status
 	return args.Get(0).(mesosproto.Status), args.Error(1)
 }
 
-func NewTestKubernetesExecutor() *KubernetesExecutor {
+func NewTestKubernetesExecutor() *Executor {
 	return New(Config{
-		Docker:  dockertools.ConnectToDockerOrDie("fake://"),
-		Updates: make(chan interface{}, 1024),
+		Docker:   dockertools.ConnectToDockerOrDie("fake://"),
+		Registry: newFakeRegistry(),
 	})
 }
 

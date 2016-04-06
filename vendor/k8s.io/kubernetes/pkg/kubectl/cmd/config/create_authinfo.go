@@ -60,13 +60,13 @@ Specifying a name that already exists will merge new fields on top of existing v
 
 const create_authinfo_example = `# Set only the "client-key" field on the "cluster-admin"
 # entry, without touching other values:
-$ kubectl config set-credentials cluster-admin --client-key=~/.kube/admin.key
+kubectl config set-credentials cluster-admin --client-key=~/.kube/admin.key
 
 # Set basic auth for the "cluster-admin" entry
-$ kubectl config set-credentials cluster-admin --username=admin --password=uXFGweU9l35qcif
+kubectl config set-credentials cluster-admin --username=admin --password=uXFGweU9l35qcif
 
 # Embed client certificate data in the "cluster-admin" entry
-$ kubectl config set-credentials cluster-admin --client-certificate=~/.kube/admin.crt --embed-certs=true`
+kubectl config set-credentials cluster-admin --client-certificate=~/.kube/admin.crt --embed-certs=true`
 
 func NewCmdConfigSetAuthInfo(out io.Writer, configAccess ConfigAccess) *cobra.Command {
 	options := &createAuthInfoOptions{configAccess: configAccess}
@@ -95,7 +95,8 @@ func NewCmdConfigSetAuthInfo(out io.Writer, configAccess ConfigAccess) *cobra.Co
 	cmd.Flags().Var(&options.token, clientcmd.FlagBearerToken, clientcmd.FlagBearerToken+" for the user entry in kubeconfig")
 	cmd.Flags().Var(&options.username, clientcmd.FlagUsername, clientcmd.FlagUsername+" for the user entry in kubeconfig")
 	cmd.Flags().Var(&options.password, clientcmd.FlagPassword, clientcmd.FlagPassword+" for the user entry in kubeconfig")
-	cmd.Flags().Var(&options.embedCertData, clientcmd.FlagEmbedCerts, "embed client cert/key for the user entry in kubeconfig")
+	f := cmd.Flags().VarPF(&options.embedCertData, clientcmd.FlagEmbedCerts, "", "embed client cert/key for the user entry in kubeconfig")
+	f.NoOptDefVal = "true"
 
 	return cmd
 }

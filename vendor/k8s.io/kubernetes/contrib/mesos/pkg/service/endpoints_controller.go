@@ -27,14 +27,15 @@ import (
 	"k8s.io/kubernetes/pkg/api/endpoints"
 	"k8s.io/kubernetes/pkg/api/errors"
 	"k8s.io/kubernetes/pkg/client/cache"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
+	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	kservice "k8s.io/kubernetes/pkg/controller/endpoint"
 	"k8s.io/kubernetes/pkg/controller/framework"
-	"k8s.io/kubernetes/pkg/fields"
 	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/util/intstr"
+	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
 	"k8s.io/kubernetes/pkg/util/sets"
+	"k8s.io/kubernetes/pkg/util/wait"
 	"k8s.io/kubernetes/pkg/util/workqueue"
 	"k8s.io/kubernetes/pkg/watch"
 
@@ -50,18 +51,18 @@ type EndpointController interface {
 }
 
 // NewEndpointController returns a new *EndpointController.
-func NewEndpointController(client *client.Client) *endpointController {
+func NewEndpointController(client *clientset.Clientset) *endpointController {
 	e := &endpointController{
 		client: client,
 		queue:  workqueue.New(),
 	}
 	e.serviceStore.Store, e.serviceController = framework.NewInformer(
 		&cache.ListWatch{
-			ListFunc: func() (runtime.Object, error) {
-				return e.client.Services(api.NamespaceAll).List(labels.Everything())
+			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
+				return e.client.Core().Services(api.NamespaceAll).List(options)
 			},
-			WatchFunc: func(rv string) (watch.Interface, error) {
-				return e.client.Services(api.NamespaceAll).Watch(labels.Everything(), fields.Everything(), rv)
+			WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
+				return e.client.Core().Services(api.NamespaceAll).Watch(options)
 			},
 		},
 		&api.Service{},
@@ -77,11 +78,11 @@ func NewEndpointController(client *client.Client) *endpointController {
 
 	e.podStore.Store, e.podController = framework.NewInformer(
 		&cache.ListWatch{
-			ListFunc: func() (runtime.Object, error) {
-				return e.client.Pods(api.NamespaceAll).List(labels.Everything(), fields.Everything())
+			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
+				return e.client.Core().Pods(api.NamespaceAll).List(options)
 			},
-			WatchFunc: func(rv string) (watch.Interface, error) {
-				return e.client.Pods(api.NamespaceAll).Watch(labels.Everything(), fields.Everything(), rv)
+			WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
+				return e.client.Core().Pods(api.NamespaceAll).Watch(options)
 			},
 		},
 		&api.Pod{},
@@ -97,7 +98,7 @@ func NewEndpointController(client *client.Client) *endpointController {
 
 // EndpointController manages selector-based service endpoints.
 type endpointController struct {
-	client *client.Client
+	client *clientset.Clientset
 
 	serviceStore cache.StoreToServiceLister
 	podStore     cache.StoreToPodLister
@@ -118,14 +119,14 @@ type endpointController struct {
 // Runs e; will not return until stopCh is closed. workers determines how many
 // endpoints will be handled in parallel.
 func (e *endpointController) Run(workers int, stopCh <-chan struct{}) {
-	defer util.HandleCrash()
+	defer utilruntime.HandleCrash()
 	go e.serviceController.Run(stopCh)
 	go e.podController.Run(stopCh)
 	for i := 0; i < workers; i++ {
-		go util.Until(e.worker, time.Second, stopCh)
+		go wait.Until(e.worker, time.Second, stopCh)
 	}
 	go func() {
-		defer util.HandleCrash()
+		defer utilruntime.HandleCrash()
 		time.Sleep(5 * time.Minute) // give time for our cache to fill
 		e.checkLeftoverEndpoints()
 	}()
@@ -263,7 +264,7 @@ func (e *endpointController) syncService(key string) {
 			// Don't retry, as the key isn't going to magically become understandable.
 			return
 		}
-		err = e.client.Endpoints(namespace).Delete(name)
+		err = e.client.Endpoints(namespace).Delete(name, nil)
 		if err != nil && !errors.IsNotFound(err) {
 			glog.Errorf("Error deleting endpoint %q: %v", key, err)
 			e.queue.Add(key) // Retry
@@ -350,7 +351,7 @@ func (e *endpointController) syncService(key string) {
 		}
 	}
 	if reflect.DeepEqual(currentEndpoints.Subsets, subsets) && reflect.DeepEqual(currentEndpoints.Labels, service.Labels) {
-		glog.V(5).Infof("endpoints are equal for %s/%s, skipping update", service.Namespace, service.Name)
+		glog.V(5).Infof("Endpoints are equal for %s/%s, skipping update", service.Namespace, service.Name)
 		return
 	}
 	newEndpoints := currentEndpoints
@@ -384,7 +385,7 @@ func (e *endpointController) syncService(key string) {
 // some stragglers could have been left behind if the endpoint controller
 // reboots).
 func (e *endpointController) checkLeftoverEndpoints() {
-	list, err := e.client.Endpoints(api.NamespaceAll).List(labels.Everything())
+	list, err := e.client.Endpoints(api.NamespaceAll).List(api.ListOptions{})
 	if err != nil {
 		glog.Errorf("Unable to list endpoints (%v); orphaned endpoints will not be cleaned up. (They're pretty harmless, but you can restart this component if you want another attempt made.)", err)
 		return
@@ -408,8 +409,8 @@ func (e *endpointController) checkLeftoverEndpoints() {
 // HACK(jdef): return the HostPort in addition to the ContainerPort for generic mesos compatibility
 func findPort(pod *api.Pod, svcPort *api.ServicePort) (int, int, error) {
 	portName := svcPort.TargetPort
-	switch portName.Kind {
-	case util.IntstrString:
+	switch portName.Type {
+	case intstr.String:
 		name := portName.StrVal
 		for _, container := range pod.Spec.Containers {
 			for _, port := range container.Ports {
@@ -419,13 +420,13 @@ func findPort(pod *api.Pod, svcPort *api.ServicePort) (int, int, error) {
 				}
 			}
 		}
-	case util.IntstrInt:
+	case intstr.Int:
 		// HACK(jdef): slightly different semantics from upstream here:
 		// we ensure that if the user spec'd a port in the service that
 		// it actually maps to a host-port assigned to the pod. upstream
 		// doesn't check this and happily returns the container port spec'd
 		// in the service, but that doesn't align w/ mesos port mgmt.
-		p := portName.IntVal
+		p := portName.IntValue()
 		for _, container := range pod.Spec.Containers {
 			for _, port := range container.Ports {
 				if port.ContainerPort == p && port.Protocol == svcPort.Protocol {

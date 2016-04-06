@@ -15,20 +15,32 @@
 # limitations under the License.
 
 # Validates that the cluster is healthy.
+# Error codes are:
+# 0 - success
+# 1 - fatal (cluster is unlikely to work)
+# 2 - non-fatal (encountered some errors, but cluster should be working correctly)
 
 set -o errexit
 set -o nounset
 set -o pipefail
 
 KUBE_ROOT=$(dirname "${BASH_SOURCE}")/..
+
+if [ -f "${KUBE_ROOT}/cluster/env.sh" ]; then
+    source "${KUBE_ROOT}/cluster/env.sh"
+fi
+
 source "${KUBE_ROOT}/cluster/kube-env.sh"
 source "${KUBE_ROOT}/cluster/kube-util.sh"
 
-EXPECTED_NUM_NODES="${NUM_MINIONS}"
+ALLOWED_NOTREADY_NODES="${ALLOWED_NOTREADY_NODES:-0}"
+
+EXPECTED_NUM_NODES="${NUM_NODES}"
 if [[ "${REGISTER_MASTER_KUBELET:-}" == "true" ]]; then
   EXPECTED_NUM_NODES=$((EXPECTED_NUM_NODES+1))
 fi
 # Make several attempts to deal with slow cluster birth.
+return_value=0
 attempt=0
 while true; do
   # The "kubectl get nodes -o template" exports node information.
@@ -40,18 +52,26 @@ while true; do
   # Suppress errors from kubectl output because during cluster bootstrapping
   # for clusters where the master node is registered, the apiserver will become
   # available and then get restarted as the kubelet configures the docker bridge.
-  nodes_status=$("${KUBE_ROOT}/cluster/kubectl.sh" get nodes -o template --template='{{range .items}}{{with index .status.conditions 0}}{{.type}}:{{.status}},{{end}}{{end}}' --api-version=v1) || true
-  found=$(echo "${nodes_status}" | tr "," "\n" | grep -c 'Ready:') || true
-  ready=$(echo "${nodes_status}" | tr "," "\n" | grep -c 'Ready:True') || true
+  node=$("${KUBE_ROOT}/cluster/kubectl.sh" get nodes) || true
+  found=$(($(echo "${node}" | wc -l) - 1)) || true
+  ready=$(($(echo "${node}" | grep -v "NotReady" | wc -l ) - 1)) || true
 
   if (( "${found}" == "${EXPECTED_NUM_NODES}" )) && (( "${ready}" == "${EXPECTED_NUM_NODES}")); then
     break
+  elif (( "${found}" > "${EXPECTED_NUM_NODES}" )) && (( "${ready}" > "${EXPECTED_NUM_NODES}")); then
+    echo -e "${color_red}Detected ${ready} ready nodes, found ${found} nodes out of expected ${EXPECTED_NUM_NODES}. Found more nodes than expected, your cluster may not behave correctly.${color_norm}"
+    break
   else
-    # Set the timeout to ~10minutes (40 x 15 second) to avoid timeouts for 100-node clusters.
-    if (( attempt > 40 )); then
-      echo -e "${color_red}Detected ${ready} ready nodes, found ${found} nodes out of expected ${EXPECTED_NUM_NODES}. Your cluster may not be working.${color_norm}"
+    # Set the timeout to ~25minutes (100 x 15 second) to avoid timeouts for 1000-node clusters.
+    if (( attempt > 100 )); then
+      echo -e "${color_red}Detected ${ready} ready nodes, found ${found} nodes out of expected ${EXPECTED_NUM_NODES}. Your cluster may not be fully functional.${color_norm}"
       "${KUBE_ROOT}/cluster/kubectl.sh" get nodes
-      exit 2
+      if [ "$((${EXPECTED_NUM_NODES} - ${ready}))" -gt "${ALLOWED_NOTREADY_NODES}" ]; then
+        exit 1
+      else
+        return_value=2
+        break
+      fi
 		else
       echo -e "${color_yellow}Waiting for ${EXPECTED_NUM_NODES} ready nodes. ${ready} ready nodes, ${found} registered. Retrying.${color_norm}"
     fi
@@ -91,4 +111,10 @@ done
 
 echo "Validate output:"
 "${KUBE_ROOT}/cluster/kubectl.sh" get cs
-echo -e "${color_green}Cluster validation succeeded${color_norm}"
+if [ "${return_value}" == "0" ]; then 
+  echo -e "${color_green}Cluster validation succeeded${color_norm}"
+else
+  echo -e "${color_yellow}Cluster validation encountered some problems, but cluster should be in working order${color_norm}"
+fi
+
+exit "${return_value}"

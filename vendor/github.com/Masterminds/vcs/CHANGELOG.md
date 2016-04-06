@@ -1,3 +1,22 @@
+# 1.5.1 (2016-03-23)
+
+- Fixing bug parsing some Git commit dates.
+
+# 1.5.0 (2016-03-22)
+
+- Add Travis CI testing for Go 1.6.
+- Issue #17: Add CommitInfo method allowing for a common way to get commit
+  metadata from all VCS.
+- Autodetect types that have git@ or hg@ users.
+- Autodetect git+ssh, bzr+ssh, git, and svn+ssh scheme urls.
+- On Bitbucket for ssh style URLs retrieve the type from the URL. This allows
+  for private repo type detection.
+- Issue #14: Autodetect ssh/scp style urls (thanks chonthu).
+
+# 1.4.1 (2016-03-07)
+
+- Fixes #16: some windows situations are unable to create parent directory.
+
 # 1.4.0 (2016-02-15)
 
 - Adding support for IBM JazzHub.

@@ -12,19 +12,21 @@ docker-run - Run a command in a new container
 [**-c**|**--cpu-shares**[=*0*]]
 [**--cap-add**[=*[]*]]
 [**--cap-drop**[=*[]*]]
+[**--cgroup-parent**[=*CGROUP-PATH*]]
 [**--cidfile**[=*CIDFILE*]]
 [**--cpu-period**[=*0*]]
+[**--cpu-quota**[=*0*]]
 [**--cpuset-cpus**[=*CPUSET-CPUS*]]
 [**--cpuset-mems**[=*CPUSET-MEMS*]]
 [**-d**|**--detach**[=*false*]]
-[**--cpu-quota**[=*0*]]
 [**--device**[=*[]*]]
-[**--dns-search**[=*[]*]]
 [**--dns**[=*[]*]]
+[**--dns-search**[=*[]*]]
 [**-e**|**--env**[=*[]*]]
 [**--entrypoint**[=*ENTRYPOINT*]]
 [**--env-file**[=*[]*]]
 [**--expose**[=*[]*]]
+[**--group-add**[=*[]*]]
 [**-h**|**--hostname**[=*HOSTNAME*]]
 [**--help**]
 [**-i**|**--interactive**[=*false*]]
@@ -32,19 +34,19 @@ docker-run - Run a command in a new container
 [**-l**|**--label**[=*[]*]]
 [**--label-file**[=*[]*]]
 [**--link**[=*[]*]]
-[**--lxc-conf**[=*[]*]]
 [**--log-driver**[=*[]*]]
 [**--log-opt**[=*[]*]]
+[**--lxc-conf**[=*[]*]]
 [**-m**|**--memory**[=*MEMORY*]]
-[**--memory-swap**[=*MEMORY-SWAP*]]
 [**--mac-address**[=*MAC-ADDRESS*]]
+[**--memory-swap**[=*MEMORY-SWAP*]]
+[**--memory-swappiness**[=*MEMORY-SWAPPINESS*]]
 [**--name**[=*NAME*]]
 [**--net**[=*"bridge"*]]
 [**--oom-kill-disable**[=*false*]]
 [**-P**|**--publish-all**[=*false*]]
 [**-p**|**--publish**[=*[]*]]
 [**--pid**[=*[]*]]
-[**--uts**[=*[]*]]
 [**--privileged**[=*false*]]
 [**--read-only**[=*false*]]
 [**--restart**[=*RESTART*]]
@@ -54,9 +56,10 @@ docker-run - Run a command in a new container
 [**-t**|**--tty**[=*false*]]
 [**-u**|**--user**[=*USER*]]
 [**-v**|**--volume**[=*[]*]]
+[**--ulimit**[=*[]*]]
+[**--uts**[=*[]*]]
 [**--volumes-from**[=*[]*]]
 [**-w**|**--workdir**[=*WORKDIR*]]
-[**--cgroup-parent**[=*CGROUP-PATH*]]
 IMAGE [COMMAND] [ARG...]
 
 # DESCRIPTION
@@ -215,6 +218,9 @@ ENTRYPOINT.
 **--expose**=[]
    Expose a port, or a range of ports (e.g. --expose=3300-3310), from the container without publishing it to your host
 
+**--group-add**=[]
+   Add additional groups to run as
+
 **-h**, **--hostname**=""
    Container host name
 
@@ -252,7 +258,7 @@ which interface and port to use.
 **--lxc-conf**=[]
    (lxc exec-driver only) Add custom lxc options --lxc-conf="lxc.cgroup.cpuset.cpus = 0,1"
 
-**--log-driver**="|*json-file*|*syslog*|*journald*|*gelf*|*none*"
+**--log-driver**="|*json-file*|*syslog*|*journald*|*gelf*|*fluentd*|*none*"
   Logging driver for container. Default is defined by daemon `--log-driver` flag.
   **Warning**: `docker logs` command works only for `json-file` logging driver.
 
@@ -371,6 +377,9 @@ its root filesystem mounted as read only prohibiting any writes.
 **--sig-proxy**=*true*|*false*
    Proxy received signals to the process (non-TTY mode only). SIGCHLD, SIGSTOP, and SIGKILL are not proxied. The default is *true*.
 
+**--memory-swappiness**=""
+   Tune a container's memory swappiness behavior. Accepts an integer between 0 and 100.
+
 **-t**, **--tty**=*true*|*false*
    Allocate a pseudo-TTY. The default is *false*.
 
@@ -388,6 +397,9 @@ standard input.
    --user [user | user:group | uid | uid:gid | user:gid | uid:group ]
 
    Without this argument the command will be run as root in the container.
+
+""--ulimit""=[]
+    Ulimit options
 
 **-v**, **--volume**=[]
    Bind mount a volume (e.g., from the host: -v /host:/container, from Docker: -v /container)

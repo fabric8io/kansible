@@ -6,6 +6,10 @@ set -e
 # or:
 #   'wget -qO- https://get.docker.com/ | sh'
 #
+# If you're interested in the daily experimental build:
+#   'curl -sSL https://experimental.docker.com/ | sh'
+# or:
+#   'wget -qO- https://experimental.docker.com/ | sh'
 #
 # Docker Maintainers:
 #   To update this script on https://get.docker.com,
@@ -105,6 +109,9 @@ do_install() {
 	if [ -z "$lsb_dist" ] && [ -r /etc/fedora-release ]; then
 		lsb_dist='fedora'
 	fi
+	if [ -z "$lsb_dist" ] && [ -r /etc/centos-release ]; then
+		lsb_dist='centos'
+	fi
 	if [ -z "$lsb_dist" ] && [ -r /etc/os-release ]; then
 		lsb_dist="$(. /etc/os-release && echo "$ID")"
 	fi
@@ -183,7 +190,7 @@ do_install() {
 			# install apparmor utils if they're missing and apparmor is enabled in the kernel
 			# otherwise Docker will fail to start
 			if [ "$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null)" = 'Y' ]; then
-				if command -v apparmor_parser &> /dev/null; then
+				if command -v apparmor_parser >/dev/null 2>&1; then
 					echo 'apparmor is enabled in the kernel and apparmor utils were already installed'
 				else
 					echo 'apparmor is enabled in the kernel, but apparmor_parser missing'
@@ -207,9 +214,12 @@ do_install() {
 					$sh_c "apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys 36A1D7869245C8950F966E92D8576A8BA88D21E9"
 				elif [ "https://test.docker.com/" = "$url" ]; then
 					$sh_c "apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys 740B314AE3941731B942C66ADF4FD13717AAD7D6"
+				elif [ "https://experimental.docker.com/" = "$url" ]; then
+					$sh_c "apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys E33FF7BF5C91D50A6F91FFFD4CC38D40F9A96B49"
 				else
 					$sh_c "$curl ${url}gpg | apt-key add -"
 				fi
+				$sh_c "mkdir -p /etc/apt/sources.list.d"
 				$sh_c "echo deb ${url}ubuntu docker main > /etc/apt/sources.list.d/docker.list"
 				$sh_c 'sleep 3; apt-get update; apt-get install -y -q lxc-docker'
 			)

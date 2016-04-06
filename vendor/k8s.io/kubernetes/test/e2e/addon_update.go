@@ -192,7 +192,7 @@ var _ = Describe("Addon update", func() {
 
 	var dir string
 	var sshClient *ssh.Client
-	f := NewFramework("addon-update-test")
+	f := NewDefaultFramework("addon-update-test")
 
 	BeforeEach(func() {
 		// This test requires:
@@ -210,13 +210,27 @@ var _ = Describe("Addon update", func() {
 		// Reduce the addon update intervals so that we have faster response
 		// to changes in the addon directory.
 		// do not use "service" command because it clears the environment variables
-		sshExecAndVerify(sshClient, "sudo TEST_ADDON_CHECK_INTERVAL_SEC=1 /etc/init.d/kube-addons restart")
+		switch testContext.OSDistro {
+		case "debian":
+			sshExecAndVerify(sshClient, "sudo TEST_ADDON_CHECK_INTERVAL_SEC=1 /etc/init.d/kube-addons restart")
+		case "trusty":
+			sshExecAndVerify(sshClient, "sudo initctl restart kube-addons TEST_ADDON_CHECK_INTERVAL_SEC=1")
+		default:
+			Failf("Unsupported OS distro type %s", testContext.OSDistro)
+		}
 	})
 
 	AfterEach(func() {
 		if sshClient != nil {
 			// restart addon_update with the default options
-			sshExec(sshClient, "sudo /etc/init.d/kube-addons restart")
+			switch testContext.OSDistro {
+			case "debian":
+				sshExec(sshClient, "sudo /etc/init.d/kube-addons restart")
+			case "trusty":
+				sshExec(sshClient, "sudo initctl restart kube-addons")
+			default:
+				Failf("Unsupported OS distro type %s", testContext.OSDistro)
+			}
 			sshClient.Close()
 		}
 	})
@@ -399,16 +413,17 @@ func writeRemoteFile(sshClient *ssh.Client, data, dir, fileName string, mode os.
 	defer session.Close()
 
 	fileSize := len(data)
-	go func() {
-		// ignore errors here. scp whould return errors if something goes wrong.
-		pipe, _ := session.StdinPipe()
-		defer pipe.Close()
-		fmt.Fprintf(pipe, "C%#o %d %s\n", mode, fileSize, fileName)
-		io.Copy(pipe, strings.NewReader(data))
-		fmt.Fprint(pipe, "\x00")
-	}()
-	if err := session.Run(fmt.Sprintf("scp -t %s", dir)); err != nil {
+	pipe, err := session.StdinPipe()
+	if err != nil {
 		return err
 	}
-	return nil
+	defer pipe.Close()
+	if err := session.Start(fmt.Sprintf("scp -t %s", dir)); err != nil {
+		return err
+	}
+	fmt.Fprintf(pipe, "C%#o %d %s\n", mode, fileSize, fileName)
+	io.Copy(pipe, strings.NewReader(data))
+	fmt.Fprint(pipe, "\x00")
+	pipe.Close()
+	return session.Wait()
 }

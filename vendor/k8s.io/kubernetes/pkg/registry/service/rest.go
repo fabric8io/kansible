@@ -30,16 +30,20 @@ import (
 	"k8s.io/kubernetes/pkg/api/rest"
 	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/api/validation"
-	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/registry/endpoint"
 	"k8s.io/kubernetes/pkg/registry/service/ipallocator"
 	"k8s.io/kubernetes/pkg/registry/service/portallocator"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util"
-	"k8s.io/kubernetes/pkg/util/fielderrors"
+	utilnet "k8s.io/kubernetes/pkg/util/net"
+	"k8s.io/kubernetes/pkg/util/validation/field"
 	"k8s.io/kubernetes/pkg/watch"
 )
+
+// ServiceRest includes storage for services and all sub resources
+type ServiceRest struct {
+	Service *REST
+	Proxy   *ProxyREST
+}
 
 // REST adapts a service registry into apiserver's RESTStorage model.
 type REST struct {
@@ -47,26 +51,33 @@ type REST struct {
 	endpoints        endpoint.Registry
 	serviceIPs       ipallocator.Interface
 	serviceNodePorts portallocator.Interface
+	proxyTransport   http.RoundTripper
 }
 
 // NewStorage returns a new REST.
 func NewStorage(registry Registry, endpoints endpoint.Registry, serviceIPs ipallocator.Interface,
-	serviceNodePorts portallocator.Interface) *REST {
-	return &REST{
+	serviceNodePorts portallocator.Interface, proxyTransport http.RoundTripper) *ServiceRest {
+	rest := &REST{
 		registry:         registry,
 		endpoints:        endpoints,
 		serviceIPs:       serviceIPs,
 		serviceNodePorts: serviceNodePorts,
+		proxyTransport:   proxyTransport,
+	}
+	return &ServiceRest{
+		Service: rest,
+		Proxy:   &ProxyREST{ServiceRest: rest, ProxyTransport: proxyTransport},
 	}
 }
 
 func (rs *REST) Create(ctx api.Context, obj runtime.Object) (runtime.Object, error) {
 	service := obj.(*api.Service)
 
-	if err := rest.BeforeCreate(rest.Services, ctx, obj); err != nil {
+	if err := rest.BeforeCreate(Strategy, ctx, obj); err != nil {
 		return nil, err
 	}
 
+	// TODO: this should probably move to strategy.PrepareForCreate()
 	releaseServiceIP := false
 	defer func() {
 		if releaseServiceIP {
@@ -83,16 +94,19 @@ func (rs *REST) Create(ctx api.Context, obj runtime.Object) (runtime.Object, err
 		// Allocate next available.
 		ip, err := rs.serviceIPs.AllocateNext()
 		if err != nil {
-			el := fielderrors.ValidationErrorList{fielderrors.NewFieldInvalid("spec.clusterIP", service.Spec.ClusterIP, err.Error())}
-			return nil, errors.NewInvalid("Service", service.Name, el)
+			// TODO: what error should be returned here?  It's not a
+			// field-level validation failure (the field is valid), and it's
+			// not really an internal error.
+			return nil, errors.NewInternalError(fmt.Errorf("failed to allocate a serviceIP: %v", err))
 		}
 		service.Spec.ClusterIP = ip.String()
 		releaseServiceIP = true
 	} else if api.IsServiceIPSet(service) {
 		// Try to respect the requested IP.
 		if err := rs.serviceIPs.Allocate(net.ParseIP(service.Spec.ClusterIP)); err != nil {
-			el := fielderrors.ValidationErrorList{fielderrors.NewFieldInvalid("spec.clusterIP", service.Spec.ClusterIP, err.Error())}
-			return nil, errors.NewInvalid("Service", service.Name, el)
+			// TODO: when validation becomes versioned, this gets more complicated.
+			el := field.ErrorList{field.Invalid(field.NewPath("spec", "clusterIP"), service.Spec.ClusterIP, err.Error())}
+			return nil, errors.NewInvalid(api.Kind("Service"), service.Name, el)
 		}
 		releaseServiceIP = true
 	}
@@ -103,14 +117,17 @@ func (rs *REST) Create(ctx api.Context, obj runtime.Object) (runtime.Object, err
 		if servicePort.NodePort != 0 {
 			err := nodePortOp.Allocate(servicePort.NodePort)
 			if err != nil {
-				el := fielderrors.ValidationErrorList{fielderrors.NewFieldInvalid("nodePort", servicePort.NodePort, err.Error())}.PrefixIndex(i).Prefix("spec.ports")
-				return nil, errors.NewInvalid("Service", service.Name, el)
+				// TODO: when validation becomes versioned, this gets more complicated.
+				el := field.ErrorList{field.Invalid(field.NewPath("spec", "ports").Index(i).Child("nodePort"), servicePort.NodePort, err.Error())}
+				return nil, errors.NewInvalid(api.Kind("Service"), service.Name, el)
 			}
 		} else if assignNodePorts {
 			nodePort, err := nodePortOp.AllocateNext()
 			if err != nil {
-				el := fielderrors.ValidationErrorList{fielderrors.NewFieldInvalid("nodePort", servicePort.NodePort, err.Error())}.PrefixIndex(i).Prefix("spec.ports")
-				return nil, errors.NewInvalid("Service", service.Name, el)
+				// TODO: what error should be returned here?  It's not a
+				// field-level validation failure (the field is valid), and it's
+				// not really an internal error.
+				return nil, errors.NewInternalError(fmt.Errorf("failed to allocate a nodePort: %v", err))
 			}
 			servicePort.NodePort = nodePort
 		}
@@ -118,7 +135,7 @@ func (rs *REST) Create(ctx api.Context, obj runtime.Object) (runtime.Object, err
 
 	out, err := rs.registry.CreateService(ctx, service)
 	if err != nil {
-		err = rest.CheckGeneratedNameError(rest.Services, err, service)
+		err = rest.CheckGeneratedNameError(Strategy, err, service)
 	}
 
 	if err == nil {
@@ -171,14 +188,20 @@ func (rs *REST) Get(ctx api.Context, id string) (runtime.Object, error) {
 	return rs.registry.GetService(ctx, id)
 }
 
-func (rs *REST) List(ctx api.Context, label labels.Selector, field fields.Selector) (runtime.Object, error) {
-	return rs.registry.ListServices(ctx, label, field)
+func (rs *REST) List(ctx api.Context, options *api.ListOptions) (runtime.Object, error) {
+	return rs.registry.ListServices(ctx, options)
 }
 
 // Watch returns Services events via a watch.Interface.
 // It implements rest.Watcher.
-func (rs *REST) Watch(ctx api.Context, label labels.Selector, field fields.Selector, resourceVersion string) (watch.Interface, error) {
-	return rs.registry.WatchServices(ctx, label, field, resourceVersion)
+func (rs *REST) Watch(ctx api.Context, options *api.ListOptions) (watch.Interface, error) {
+	return rs.registry.WatchServices(ctx, options)
+}
+
+// Export returns Service stripped of cluster-specific information.
+// It implements rest.Exporter.
+func (rs *REST) Export(ctx api.Context, name string, opts unversioned.ExportOptions) (runtime.Object, error) {
+	return rs.registry.ExportService(ctx, name, opts)
 }
 
 func (*REST) New() runtime.Object {
@@ -192,7 +215,7 @@ func (*REST) NewList() runtime.Object {
 func (rs *REST) Update(ctx api.Context, obj runtime.Object) (runtime.Object, bool, error) {
 	service := obj.(*api.Service)
 	if !api.ValidNamespace(ctx, &service.ObjectMeta) {
-		return nil, false, errors.NewConflict("service", service.Namespace, fmt.Errorf("Service.Namespace does not match the provided context"))
+		return nil, false, errors.NewConflict(api.Resource("services"), service.Namespace, fmt.Errorf("Service.Namespace does not match the provided context"))
 	}
 
 	oldService, err := rs.registry.GetService(ctx, service.Name)
@@ -202,8 +225,8 @@ func (rs *REST) Update(ctx api.Context, obj runtime.Object) (runtime.Object, boo
 
 	// Copy over non-user fields
 	// TODO: make this a merge function
-	if errs := validation.ValidateServiceUpdate(oldService, service); len(errs) > 0 {
-		return nil, false, errors.NewInvalid("service", service.Name, errs)
+	if errs := validation.ValidateServiceUpdate(service, oldService); len(errs) > 0 {
+		return nil, false, errors.NewInvalid(api.Kind("Service"), service.Name, errs)
 	}
 
 	nodePortOp := portallocator.StartOperation(rs.serviceNodePorts)
@@ -222,15 +245,17 @@ func (rs *REST) Update(ctx api.Context, obj runtime.Object) (runtime.Object, boo
 				if !contains(oldNodePorts, nodePort) {
 					err := nodePortOp.Allocate(nodePort)
 					if err != nil {
-						el := fielderrors.ValidationErrorList{fielderrors.NewFieldInvalid("nodePort", nodePort, err.Error())}.PrefixIndex(i).Prefix("spec.ports")
-						return nil, false, errors.NewInvalid("Service", service.Name, el)
+						el := field.ErrorList{field.Invalid(field.NewPath("spec", "ports").Index(i).Child("nodePort"), nodePort, err.Error())}
+						return nil, false, errors.NewInvalid(api.Kind("Service"), service.Name, el)
 					}
 				}
 			} else {
 				nodePort, err = nodePortOp.AllocateNext()
 				if err != nil {
-					el := fielderrors.ValidationErrorList{fielderrors.NewFieldInvalid("nodePort", nodePort, err.Error())}.PrefixIndex(i).Prefix("spec.ports")
-					return nil, false, errors.NewInvalid("Service", service.Name, el)
+					// TODO: what error should be returned here?  It's not a
+					// field-level validation failure (the field is valid), and it's
+					// not really an internal error.
+					return nil, false, errors.NewInternalError(fmt.Errorf("failed to allocate a nodePort: %v", err))
 				}
 				servicePort.NodePort = nodePort
 			}
@@ -277,10 +302,30 @@ var _ = rest.Redirector(&REST{})
 
 // ResourceLocation returns a URL to which one can send traffic for the specified service.
 func (rs *REST) ResourceLocation(ctx api.Context, id string) (*url.URL, http.RoundTripper, error) {
-	// Allow ID as "svcname" or "svcname:port".
-	svcName, portStr, valid := util.SplitPort(id)
+	// Allow ID as "svcname", "svcname:port", or "scheme:svcname:port".
+	svcScheme, svcName, portStr, valid := utilnet.SplitSchemeNamePort(id)
 	if !valid {
 		return nil, nil, errors.NewBadRequest(fmt.Sprintf("invalid service request %q", id))
+	}
+
+	// If a port *number* was specified, find the corresponding service port name
+	if portNum, err := strconv.ParseInt(portStr, 10, 64); err == nil {
+		svc, err := rs.registry.GetService(ctx, svcName)
+		if err != nil {
+			return nil, nil, err
+		}
+		found := false
+		for _, svcPort := range svc.Spec.Ports {
+			if svcPort.Port == int(portNum) {
+				// use the declared port's name
+				portStr = svcPort.Name
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, nil, errors.NewServiceUnavailable(fmt.Sprintf("no service port %d found for service %q", portNum, svcName))
+		}
 	}
 
 	eps, err := rs.endpoints.GetEndpoints(ctx, svcName)
@@ -303,11 +348,10 @@ func (rs *REST) ResourceLocation(ctx api.Context, id string) (*url.URL, http.Rou
 				// Pick a random address.
 				ip := ss.Addresses[rand.Intn(len(ss.Addresses))].IP
 				port := ss.Ports[i].Port
-				// We leave off the scheme ('http://') because we have no idea what sort of server
-				// is listening at this endpoint.
 				return &url.URL{
-					Host: net.JoinHostPort(ip, strconv.Itoa(port)),
-				}, nil, nil
+					Scheme: svcScheme,
+					Host:   net.JoinHostPort(ip, strconv.Itoa(port)),
+				}, rs.proxyTransport, nil
 			}
 		}
 	}

@@ -17,20 +17,28 @@ limitations under the License.
 package iscsi
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/testapi"
-	"k8s.io/kubernetes/pkg/client/unversioned/testclient"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
 	"k8s.io/kubernetes/pkg/types"
 	"k8s.io/kubernetes/pkg/util/mount"
+	utiltesting "k8s.io/kubernetes/pkg/util/testing"
 	"k8s.io/kubernetes/pkg/volume"
+	volumetest "k8s.io/kubernetes/pkg/volume/testing"
 )
 
 func TestCanSupport(t *testing.T) {
+	tmpDir, err := utiltesting.MkTmpdir("iscsi_test")
+	if err != nil {
+		t.Fatalf("error creating temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
 	plugMgr := volume.VolumePluginMgr{}
-	plugMgr.InitPlugins(ProbeVolumePlugins(), volume.NewFakeVolumeHost("/tmp/fake", nil, nil))
+	plugMgr.InitPlugins(ProbeVolumePlugins(), volumetest.NewFakeVolumeHost(tmpDir, nil, nil))
 
 	plug, err := plugMgr.FindPluginByName("kubernetes.io/iscsi")
 	if err != nil {
@@ -45,8 +53,14 @@ func TestCanSupport(t *testing.T) {
 }
 
 func TestGetAccessModes(t *testing.T) {
+	tmpDir, err := utiltesting.MkTmpdir("iscsi_test")
+	if err != nil {
+		t.Fatalf("error creating temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
 	plugMgr := volume.VolumePluginMgr{}
-	plugMgr.InitPlugins(ProbeVolumePlugins(), volume.NewFakeVolumeHost("/tmp/fake", nil, nil))
+	plugMgr.InitPlugins(ProbeVolumePlugins(), volumetest.NewFakeVolumeHost(tmpDir, nil, nil))
 
 	plug, err := plugMgr.FindPersistentPluginByName("kubernetes.io/iscsi")
 	if err != nil {
@@ -67,12 +81,23 @@ func contains(modes []api.PersistentVolumeAccessMode, mode api.PersistentVolumeA
 }
 
 type fakeDiskManager struct {
+	tmpDir       string
 	attachCalled bool
 	detachCalled bool
 }
 
+func NewFakeDiskManager() *fakeDiskManager {
+	return &fakeDiskManager{
+		tmpDir: utiltesting.MkTmpdirOrDie("fc_test"),
+	}
+}
+
+func (fake *fakeDiskManager) Cleanup() {
+	os.RemoveAll(fake.tmpDir)
+}
+
 func (fake *fakeDiskManager) MakeGlobalPDName(disk iscsiDisk) string {
-	return "/tmp/fake_iscsi_path"
+	return fake.tmpDir
 }
 func (fake *fakeDiskManager) AttachDisk(b iscsiDiskBuilder) error {
 	globalPath := b.manager.MakeGlobalPDName(*b.iscsiDisk)
@@ -99,14 +124,21 @@ func (fake *fakeDiskManager) DetachDisk(c iscsiDiskCleaner, mntPath string) erro
 }
 
 func doTestPlugin(t *testing.T, spec *volume.Spec) {
+	tmpDir, err := utiltesting.MkTmpdir("iscsi_test")
+	if err != nil {
+		t.Fatalf("error creating temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
 	plugMgr := volume.VolumePluginMgr{}
-	plugMgr.InitPlugins(ProbeVolumePlugins(), volume.NewFakeVolumeHost("/tmp/fake", nil, nil))
+	plugMgr.InitPlugins(ProbeVolumePlugins(), volumetest.NewFakeVolumeHost(tmpDir, nil, nil))
 
 	plug, err := plugMgr.FindPluginByName("kubernetes.io/iscsi")
 	if err != nil {
 		t.Errorf("Can't find the plugin by name")
 	}
-	fakeManager := &fakeDiskManager{}
+	fakeManager := NewFakeDiskManager()
+	defer fakeManager.Cleanup()
 	fakeMounter := &mount.FakeMounter{}
 	builder, err := plug.(*iscsiPlugin).newBuilderInternal(spec, types.UID("poduid"), fakeManager, fakeMounter)
 	if err != nil {
@@ -117,11 +149,12 @@ func doTestPlugin(t *testing.T, spec *volume.Spec) {
 	}
 
 	path := builder.GetPath()
-	if path != "/tmp/fake/pods/poduid/volumes/kubernetes.io~iscsi/vol1" {
-		t.Errorf("Got unexpected path: %s", path)
+	expectedPath := fmt.Sprintf("%s/pods/poduid/volumes/kubernetes.io~iscsi/vol1", tmpDir)
+	if path != expectedPath {
+		t.Errorf("Unexpected path, expected %q, got: %q", expectedPath, path)
 	}
 
-	if err := builder.SetUp(); err != nil {
+	if err := builder.SetUp(nil); err != nil {
 		t.Errorf("Expected success, got: %v", err)
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -142,8 +175,9 @@ func doTestPlugin(t *testing.T, spec *volume.Spec) {
 		t.Errorf("Attach was not called")
 	}
 
-	fakeManager = &fakeDiskManager{}
-	cleaner, err := plug.(*iscsiPlugin).newCleanerInternal("vol1", types.UID("poduid"), fakeManager, fakeMounter)
+	fakeManager2 := NewFakeDiskManager()
+	defer fakeManager2.Cleanup()
+	cleaner, err := plug.(*iscsiPlugin).newCleanerInternal("vol1", types.UID("poduid"), fakeManager2, fakeMounter)
 	if err != nil {
 		t.Errorf("Failed to make a new Cleaner: %v", err)
 	}
@@ -159,7 +193,7 @@ func doTestPlugin(t *testing.T, spec *volume.Spec) {
 	} else if !os.IsNotExist(err) {
 		t.Errorf("SetUp() failed: %v", err)
 	}
-	if !fakeManager.detachCalled {
+	if !fakeManager2.detachCalled {
 		t.Errorf("Detach was not called")
 	}
 }
@@ -199,6 +233,12 @@ func TestPluginPersistentVolume(t *testing.T) {
 }
 
 func TestPersistentClaimReadOnlyFlag(t *testing.T) {
+	tmpDir, err := utiltesting.MkTmpdir("iscsi_test")
+	if err != nil {
+		t.Fatalf("error creating temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
 	pv := &api.PersistentVolume{
 		ObjectMeta: api.ObjectMeta{
 			Name: "pvA",
@@ -231,14 +271,10 @@ func TestPersistentClaimReadOnlyFlag(t *testing.T) {
 		},
 	}
 
-	o := testclient.NewObjects(api.Scheme, api.Scheme)
-	o.Add(pv)
-	o.Add(claim)
-	client := &testclient.Fake{}
-	client.AddReactor("*", "*", testclient.ObjectReaction(o, testapi.Default.RESTMapper()))
+	client := fake.NewSimpleClientset(pv, claim)
 
 	plugMgr := volume.VolumePluginMgr{}
-	plugMgr.InitPlugins(ProbeVolumePlugins(), volume.NewFakeVolumeHost("/tmp/fake", client, nil))
+	plugMgr.InitPlugins(ProbeVolumePlugins(), volumetest.NewFakeVolumeHost(tmpDir, client, nil))
 	plug, _ := plugMgr.FindPluginByName(iscsiPluginName)
 
 	// readOnly bool is supplied by persistent-claim volume source when its builder creates other volumes
@@ -246,7 +282,16 @@ func TestPersistentClaimReadOnlyFlag(t *testing.T) {
 	pod := &api.Pod{ObjectMeta: api.ObjectMeta{UID: types.UID("poduid")}}
 	builder, _ := plug.NewBuilder(spec, pod, volume.VolumeOptions{})
 
-	if !builder.IsReadOnly() {
+	if !builder.GetAttributes().ReadOnly {
 		t.Errorf("Expected true for builder.IsReadOnly")
+	}
+}
+
+func TestPortalBuilder(t *testing.T) {
+	if portal := portalBuilder("127.0.0.1"); portal != "127.0.0.1:3260" {
+		t.Errorf("wrong portal: %s", portal)
+	}
+	if portal := portalBuilder("127.0.0.1:3260"); portal != "127.0.0.1:3260" {
+		t.Errorf("wrong portal: %s", portal)
 	}
 }

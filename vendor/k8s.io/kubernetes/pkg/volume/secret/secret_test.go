@@ -21,26 +21,30 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"runtime"
 	"strings"
 	"testing"
 
 	"k8s.io/kubernetes/pkg/api"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/client/unversioned/testclient"
+	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
 	"k8s.io/kubernetes/pkg/types"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/empty_dir"
+	volumetest "k8s.io/kubernetes/pkg/volume/testing"
 	"k8s.io/kubernetes/pkg/volume/util"
+
+	"github.com/stretchr/testify/assert"
 )
 
-func newTestHost(t *testing.T, client client.Interface) (string, volume.VolumeHost) {
+func newTestHost(t *testing.T, clientset clientset.Interface) (string, volume.VolumeHost) {
 	tempDir, err := ioutil.TempDir("/tmp", "secret_volume_test.")
 	if err != nil {
 		t.Fatalf("can't make a temp rootdir: %v", err)
 	}
 
-	return tempDir, volume.NewFakeVolumeHost(tempDir, client, empty_dir.ProbeVolumePlugins())
+	return tempDir, volumetest.NewFakeVolumeHost(tempDir, clientset, empty_dir.ProbeVolumePlugins())
 }
 
 func TestCanSupport(t *testing.T) {
@@ -70,11 +74,11 @@ func TestPlugin(t *testing.T) {
 		testNamespace  = "test_secret_namespace"
 		testName       = "test_secret_name"
 
-		volumeSpec = volumeSpec(testVolumeName, testName)
-		secret     = secret(testNamespace, testName)
-		client     = testclient.NewSimpleFake(&secret)
-		pluginMgr  = volume.VolumePluginMgr{}
-		_, host    = newTestHost(t, client)
+		volumeSpec    = volumeSpec(testVolumeName, testName)
+		secret        = secret(testNamespace, testName)
+		client        = fake.NewSimpleClientset(&secret)
+		pluginMgr     = volume.VolumePluginMgr{}
+		rootDir, host = newTestHost(t, client)
 	)
 
 	pluginMgr.InitPlugins(ProbeVolumePlugins(), host)
@@ -98,7 +102,7 @@ func TestPlugin(t *testing.T) {
 		t.Errorf("Got unexpected path: %s", volumePath)
 	}
 
-	err = builder.SetUp()
+	err = builder.SetUp(nil)
 	if err != nil {
 		t.Errorf("Failed to setup volume: %v", err)
 	}
@@ -110,8 +114,27 @@ func TestPlugin(t *testing.T) {
 		}
 	}
 
+	// secret volume should create its own empty wrapper path
+	podWrapperMetadataDir := fmt.Sprintf("%v/pods/test_pod_uid/plugins/kubernetes.io~empty-dir/wrapped_test_volume_name", rootDir)
+
+	if _, err := os.Stat(podWrapperMetadataDir); err != nil {
+		if os.IsNotExist(err) {
+			t.Errorf("SetUp() failed, empty-dir wrapper path is not created: %s", podWrapperMetadataDir)
+		} else {
+			t.Errorf("SetUp() failed: %v", err)
+		}
+	}
 	doTestSecretDataInVolume(volumePath, secret, t)
-	doTestCleanAndTeardown(plugin, testPodUID, testVolumeName, volumePath, t)
+	defer doTestCleanAndTeardown(plugin, testPodUID, testVolumeName, volumePath, t)
+
+	// Metrics only supported on linux
+	metrics, err := builder.GetMetrics()
+	if runtime.GOOS == "linux" {
+		assert.NotEmpty(t, metrics)
+		assert.NoError(t, err)
+	} else {
+		t.Skipf("Volume metrics not supported on %s", runtime.GOOS)
+	}
 }
 
 // Test the case where the 'ready' file has been created and the pod volume dir
@@ -125,7 +148,7 @@ func TestPluginIdempotent(t *testing.T) {
 
 		volumeSpec    = volumeSpec(testVolumeName, testName)
 		secret        = secret(testNamespace, testName)
-		client        = testclient.NewSimpleFake(&secret)
+		client        = fake.NewSimpleClientset(&secret)
 		pluginMgr     = volume.VolumePluginMgr{}
 		rootDir, host = newTestHost(t, client)
 	)
@@ -156,7 +179,7 @@ func TestPluginIdempotent(t *testing.T) {
 	}
 
 	volumePath := builder.GetPath()
-	err = builder.SetUp()
+	err = builder.SetUp(nil)
 	if err != nil {
 		t.Errorf("Failed to setup volume: %v", err)
 	}
@@ -186,7 +209,7 @@ func TestPluginReboot(t *testing.T) {
 
 		volumeSpec    = volumeSpec(testVolumeName, testName)
 		secret        = secret(testNamespace, testName)
-		client        = testclient.NewSimpleFake(&secret)
+		client        = fake.NewSimpleClientset(&secret)
 		pluginMgr     = volume.VolumePluginMgr{}
 		rootDir, host = newTestHost(t, client)
 	)
@@ -214,7 +237,7 @@ func TestPluginReboot(t *testing.T) {
 		t.Errorf("Got unexpected path: %s", volumePath)
 	}
 
-	err = builder.SetUp()
+	err = builder.SetUp(nil)
 	if err != nil {
 		t.Errorf("Failed to setup volume: %v", err)
 	}

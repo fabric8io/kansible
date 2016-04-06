@@ -47,13 +47,6 @@ func NewDSAPrivateKey(currentTime time.Time, priv *dsa.PrivateKey) *PrivateKey {
 	return pk
 }
 
-func NewElGamalPrivateKey(currentTime time.Time, priv *elgamal.PrivateKey) *PrivateKey {
-	pk := new(PrivateKey)
-	pk.PublicKey = *NewElGamalPublicKey(currentTime, &priv.PublicKey)
-	pk.PrivateKey = priv
-	return pk
-}
-
 func (pk *PrivateKey) parse(r io.Reader) (err error) {
 	err = (&pk.PublicKey).parse(r)
 	if err != nil {
@@ -137,8 +130,6 @@ func (pk *PrivateKey) Serialize(w io.Writer) (err error) {
 		err = serializeRSAPrivateKey(privateKeyBuf, priv)
 	case *dsa.PrivateKey:
 		err = serializeDSAPrivateKey(privateKeyBuf, priv)
-	case *elgamal.PrivateKey:
-		err = serializeElGamalPrivateKey(privateKeyBuf, priv)
 	default:
 		err = errors.InvalidArgumentError("unknown private key type")
 	}
@@ -191,10 +182,6 @@ func serializeRSAPrivateKey(w io.Writer, priv *rsa.PrivateKey) error {
 }
 
 func serializeDSAPrivateKey(w io.Writer, priv *dsa.PrivateKey) error {
-	return writeBig(w, priv.X)
-}
-
-func serializeElGamalPrivateKey(w io.Writer, priv *elgamal.PrivateKey) error {
 	return writeBig(w, priv.X)
 }
 
@@ -276,9 +263,6 @@ func (pk *PrivateKey) parseRSAPrivateKey(data []byte) (err error) {
 	rsaPriv.Primes = make([]*big.Int, 2)
 	rsaPriv.Primes[0] = new(big.Int).SetBytes(p)
 	rsaPriv.Primes[1] = new(big.Int).SetBytes(q)
-	if err := rsaPriv.Validate(); err != nil {
-		return err
-	}
 	rsaPriv.Precompute()
 	pk.PrivateKey = rsaPriv
 	pk.Encrypted = false

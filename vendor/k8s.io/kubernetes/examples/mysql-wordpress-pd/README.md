@@ -81,7 +81,7 @@ spec:
     - resources:
         limits :
           cpu: 0.5
-      image: mysql
+      image: mysql:5.6
       name: mysql
       env:
         - name: MYSQL_ROOT_PASSWORD

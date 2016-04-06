@@ -105,7 +105,7 @@ const (
 		"finished_tasks": 0,
 		"flags": {
 			"zk_session_timeout": "10secs",
-			"work_dir": "/tmp/mesos/local/Lc9arz",
+			"work_dir": "/somepath/mesos/local/Lc9arz",
 			"webui_dir": "/usr/local/share/mesos/webui",
 			"version": "false",
 			"user_sorter": "drf",
@@ -212,8 +212,11 @@ func Test_parseMesosState(t *testing.T) {
 func Test_listSlaves(t *testing.T) {
 	defer log.Flush()
 	md := FakeMasterDetector{}
-	httpServer, httpClient, httpTransport := makeHttpMocks()
-	defer httpServer.Close()
+	// TODO: Uncomment next two lines and remove third line when fix #19254
+	// defer httpServer.Close()
+	// httpServer, httpClient, httpTransport := makeHttpMocks()
+	_, httpClient, httpTransport := makeHttpMocks()
+
 	cacheTTL := 500 * time.Millisecond
 	mesosClient, err := createMesosClient(md, httpClient, httpTransport, cacheTTL)
 
@@ -250,8 +253,10 @@ func Test_listSlaves(t *testing.T) {
 func Test_clusterName(t *testing.T) {
 	defer log.Flush()
 	md := FakeMasterDetector{}
-	httpServer, httpClient, httpTransport := makeHttpMocks()
-	defer httpServer.Close()
+	// TODO: Uncomment next two lines and remove third line when fix #19254
+	// defer httpServer.Close()
+	// httpServer, httpClient, httpTransport := makeHttpMocks()
+	_, httpClient, httpTransport := makeHttpMocks()
 	cacheTTL := 500 * time.Millisecond
 	mesosClient, err := createMesosClient(md, httpClient, httpTransport, cacheTTL)
 

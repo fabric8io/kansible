@@ -24,49 +24,62 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/testapi"
-	"k8s.io/kubernetes/pkg/client/unversioned"
+	"k8s.io/kubernetes/pkg/client/restclient"
 	"k8s.io/kubernetes/pkg/runtime"
 )
 
-type HTTPClientFunc func(*http.Request) (*http.Response, error)
+func CreateHTTPClient(roundTripper func(*http.Request) (*http.Response, error)) *http.Client {
+	return &http.Client{
+		Transport: roundTripperFunc(roundTripper),
+	}
+}
 
-func (f HTTPClientFunc) Do(req *http.Request) (*http.Response, error) {
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
 // RESTClient provides a fake RESTClient interface.
 type RESTClient struct {
-	Client unversioned.HTTPClient
+	Client *http.Client
 	Codec  runtime.Codec
 	Req    *http.Request
 	Resp   *http.Response
 	Err    error
 }
 
-func (c *RESTClient) Get() *unversioned.Request {
-	return unversioned.NewRequest(c, "GET", &url.URL{Host: "localhost"}, testapi.Default.Version(), c.Codec)
+func (c *RESTClient) Get() *restclient.Request {
+	return c.request("GET")
 }
 
-func (c *RESTClient) Put() *unversioned.Request {
-	return unversioned.NewRequest(c, "PUT", &url.URL{Host: "localhost"}, testapi.Default.Version(), c.Codec)
+func (c *RESTClient) Put() *restclient.Request {
+	return c.request("PUT")
 }
 
-func (c *RESTClient) Patch(_ api.PatchType) *unversioned.Request {
-	return unversioned.NewRequest(c, "PATCH", &url.URL{Host: "localhost"}, testapi.Default.Version(), c.Codec)
+func (c *RESTClient) Patch(_ api.PatchType) *restclient.Request {
+	return c.request("PATCH")
 }
 
-func (c *RESTClient) Post() *unversioned.Request {
-	return unversioned.NewRequest(c, "POST", &url.URL{Host: "localhost"}, testapi.Default.Version(), c.Codec)
+func (c *RESTClient) Post() *restclient.Request {
+	return c.request("POST")
 }
 
-func (c *RESTClient) Delete() *unversioned.Request {
-	return unversioned.NewRequest(c, "DELETE", &url.URL{Host: "localhost"}, testapi.Default.Version(), c.Codec)
+func (c *RESTClient) Delete() *restclient.Request {
+	return c.request("DELETE")
+}
+
+func (c *RESTClient) request(verb string) *restclient.Request {
+	return restclient.NewRequest(c, verb, &url.URL{Host: "localhost"}, "", restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion(), Codec: c.Codec}, nil, nil)
 }
 
 func (c *RESTClient) Do(req *http.Request) (*http.Response, error) {
+	if c.Err != nil {
+		return nil, c.Err
+	}
 	c.Req = req
-	if c.Client != unversioned.HTTPClient(nil) {
+	if c.Client != nil {
 		return c.Client.Do(req)
 	}
-	return c.Resp, c.Err
+	return c.Resp, nil
 }

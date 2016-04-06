@@ -30,15 +30,18 @@ import (
 	"k8s.io/kubernetes/pkg/api/testapi"
 	"k8s.io/kubernetes/pkg/api/validation"
 	"k8s.io/kubernetes/pkg/apis/extensions"
-	expValidation "k8s.io/kubernetes/pkg/apis/extensions/validation"
+	expvalidation "k8s.io/kubernetes/pkg/apis/extensions/validation"
 	"k8s.io/kubernetes/pkg/capabilities"
+	"k8s.io/kubernetes/pkg/registry/job"
 	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/types"
+	"k8s.io/kubernetes/pkg/util/validation/field"
 	"k8s.io/kubernetes/pkg/util/yaml"
 	schedulerapi "k8s.io/kubernetes/plugin/pkg/scheduler/api"
 	schedulerapilatest "k8s.io/kubernetes/plugin/pkg/scheduler/api/latest"
 )
 
-func validateObject(obj runtime.Object) (errors []error) {
+func validateObject(obj runtime.Object) (errors field.ErrorList) {
 	switch t := obj.(type) {
 	case *api.ReplicationController:
 		if t.Namespace == "" {
@@ -105,24 +108,27 @@ func validateObject(obj runtime.Object) (errors []error) {
 		if t.Namespace == "" {
 			t.Namespace = api.NamespaceDefault
 		}
-		errors = expValidation.ValidateDeployment(t)
+		errors = expvalidation.ValidateDeployment(t)
 	case *extensions.Job:
 		if t.Namespace == "" {
 			t.Namespace = api.NamespaceDefault
 		}
-		errors = expValidation.ValidateJob(t)
+		// Job needs generateSelector called before validation, and job.Validate does this.
+		// See: https://github.com/kubernetes/kubernetes/issues/20951#issuecomment-187787040
+		t.ObjectMeta.UID = types.UID("fakeuid")
+		errors = job.Strategy.Validate(nil, t)
 	case *extensions.Ingress:
 		if t.Namespace == "" {
 			t.Namespace = api.NamespaceDefault
 		}
-		errors = expValidation.ValidateIngress(t)
+		errors = expvalidation.ValidateIngress(t)
 	case *extensions.DaemonSet:
 		if t.Namespace == "" {
 			t.Namespace = api.NamespaceDefault
 		}
-		errors = expValidation.ValidateDaemonSet(t)
+		errors = expvalidation.ValidateDaemonSet(t)
 	default:
-		return []error{fmt.Errorf("no validation defined for %#v", obj)}
+		return field.ErrorList{field.InternalError(field.NewPath(""), fmt.Errorf("no validation defined for %#v", obj))}
 	}
 	return errors
 }
@@ -225,17 +231,19 @@ func TestExampleObjectSchemas(t *testing.T) {
 		"../docs/user-guide": {
 			"multi-pod":            nil,
 			"pod":                  &api.Pod{},
-			"replication":          &api.ReplicationController{},
 			"job":                  &extensions.Job{},
 			"ingress":              &extensions.Ingress{},
 			"nginx-deployment":     &extensions.Deployment{},
 			"new-nginx-deployment": &extensions.Deployment{},
+			"replication":          &api.ReplicationController{},
+			"deployment":           &extensions.Deployment{},
 		},
 		"../docs/admin": {
 			"daemon": &extensions.DaemonSet{},
 		},
 		"../examples": {
-			"scheduler-policy-config": &schedulerapi.Policy{},
+			"scheduler-policy-config":               &schedulerapi.Policy{},
+			"scheduler-policy-config-with-extender": &schedulerapi.Policy{},
 		},
 		"../examples/rbd/secret": {
 			"ceph-secret": &api.Secret{},
@@ -245,6 +253,7 @@ func TestExampleObjectSchemas(t *testing.T) {
 			"rbd-with-secret": &api.Pod{},
 		},
 		"../examples/cassandra": {
+			"cassandra-daemonset":  &extensions.DaemonSet{},
 			"cassandra-controller": &api.ReplicationController{},
 			"cassandra-service":    &api.Service{},
 			"cassandra":            &api.Pod{},
@@ -318,6 +327,7 @@ func TestExampleObjectSchemas(t *testing.T) {
 		},
 		"../docs/user-guide/node-selection": {
 			"pod": &api.Pod{},
+			"pod-with-node-affinity": &api.Pod{},
 		},
 		"../examples/openshift-origin": {
 			"openshift-origin-namespace": &api.Namespace{},
@@ -330,9 +340,8 @@ func TestExampleObjectSchemas(t *testing.T) {
 			"secret":                     nil,
 		},
 		"../examples/phabricator": {
-			"authenticator-controller": &api.ReplicationController{},
-			"phabricator-controller":   &api.ReplicationController{},
-			"phabricator-service":      &api.Service{},
+			"phabricator-controller": &api.ReplicationController{},
+			"phabricator-service":    &api.Service{},
 		},
 		"../examples/redis": {
 			"redis-controller":          &api.ReplicationController{},
@@ -353,14 +362,23 @@ func TestExampleObjectSchemas(t *testing.T) {
 			"rc":             &api.ReplicationController{},
 		},
 		"../docs/user-guide/secrets": {
-			"secret-pod": &api.Pod{},
-			"secret":     &api.Secret{},
+			"secret-pod":     &api.Pod{},
+			"secret":         &api.Secret{},
+			"secret-env-pod": &api.Pod{},
 		},
 		"../examples/spark": {
+			"spark-master-controller": &api.ReplicationController{},
 			"spark-master-service":    &api.Service{},
-			"spark-master":            &api.Pod{},
+			"spark-webui":             &api.Service{},
 			"spark-worker-controller": &api.ReplicationController{},
-			"spark-driver":            &api.Pod{},
+			"zeppelin-controller":     &api.ReplicationController{},
+			"zeppelin-service":        &api.Service{},
+		},
+		"../examples/spark/spark-gluster": {
+			"spark-master-service":    &api.Service{},
+			"spark-master-controller": &api.ReplicationController{},
+			"spark-worker-controller": &api.ReplicationController{},
+			"glusterfs-endpoints":     &api.Endpoints{},
 		},
 		"../examples/storm": {
 			"storm-nimbus-service":    &api.Service{},
@@ -376,8 +394,20 @@ func TestExampleObjectSchemas(t *testing.T) {
 		"../examples/fibre_channel": {
 			"fc": &api.Pod{},
 		},
-		"../examples/extensions": {
-			"deployment": &extensions.Deployment{},
+		"../examples/javaweb-tomcat-sidecar": {
+			"javaweb":   &api.Pod{},
+			"javaweb-2": &api.Pod{},
+		},
+		"../examples/job/work-queue-1": {
+			"job": &extensions.Job{},
+		},
+		"../examples/job/work-queue-2": {
+			"redis-pod":     &api.Pod{},
+			"redis-service": &api.Service{},
+			"job":           &extensions.Job{},
+		},
+		"../examples/azure_file": {
+			"azure": &api.Pod{},
 		},
 	}
 
@@ -398,8 +428,8 @@ func TestExampleObjectSchemas(t *testing.T) {
 				t.Logf("skipping : %s/%s\n", path, name)
 				return
 			}
-			if name == "scheduler-policy-config" {
-				if err := schedulerapilatest.Codec.DecodeInto(data, expectedType); err != nil {
+			if strings.Contains(name, "scheduler-policy-config") {
+				if err := runtime.DecodeInto(schedulerapilatest.Codec, data, expectedType); err != nil {
 					t.Errorf("%s did not decode correctly: %v\n%s", path, err, string(data))
 					return
 				}
@@ -409,7 +439,7 @@ func TestExampleObjectSchemas(t *testing.T) {
 				if err != nil {
 					t.Errorf("Could not get codec for %s: %s", expectedType, err)
 				}
-				if err := codec.DecodeInto(data, expectedType); err != nil {
+				if err := runtime.DecodeInto(codec, data, expectedType); err != nil {
 					t.Errorf("%s did not decode correctly: %v\n%s", path, err, string(data))
 					return
 				}
@@ -454,7 +484,6 @@ func TestReadme(t *testing.T) {
 		{"../README.md", []runtime.Object{&api.Pod{}}},
 		{"../docs/user-guide/walkthrough/README.md", []runtime.Object{&api.Pod{}}},
 		{"../examples/iscsi/README.md", []runtime.Object{&api.Pod{}}},
-		{"../docs/user-guide/simple-yaml.md", []runtime.Object{&api.Pod{}, &api.ReplicationController{}}},
 	}
 
 	for _, path := range paths {
@@ -495,14 +524,14 @@ func TestReadme(t *testing.T) {
 			if err != nil {
 				t.Errorf("%s could not be converted to JSON: %v\n%s", path, err, string(content))
 			}
-			if err := testapi.Default.Codec().DecodeInto(json, expectedType); err != nil {
+			if err := runtime.DecodeInto(testapi.Default.Codec(), json, expectedType); err != nil {
 				t.Errorf("%s did not decode correctly: %v\n%s", path, err, string(content))
 				continue
 			}
 			if errors := validateObject(expectedType); len(errors) > 0 {
 				t.Errorf("%s did not validate correctly: %v", path, errors)
 			}
-			_, err = testapi.Default.Codec().Encode(expectedType)
+			_, err = runtime.Encode(testapi.Default.Codec(), expectedType)
 			if err != nil {
 				t.Errorf("Could not encode object: %v", err)
 				continue

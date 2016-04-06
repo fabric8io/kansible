@@ -18,14 +18,31 @@ package dockertools
 
 import (
 	"fmt"
+	"strings"
 
 	docker "github.com/fsouza/go-dockerclient"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
-	"k8s.io/kubernetes/pkg/types"
 )
 
 // This file contains helper functions to convert docker API types to runtime
 // (kubecontainer) types.
+const (
+	statusRunningPrefix = "Up"
+	statusExitedPrefix  = "Exited"
+)
+
+func mapState(state string) kubecontainer.ContainerState {
+	// Parse the state string in docker.APIContainers. This could break when
+	// we upgrade docker.
+	switch {
+	case strings.HasPrefix(state, statusRunningPrefix):
+		return kubecontainer.ContainerStateRunning
+	case strings.HasPrefix(state, statusExitedPrefix):
+		return kubecontainer.ContainerStateExited
+	default:
+		return kubecontainer.ContainerStateUnknown
+	}
+}
 
 // Converts docker.APIContainers to kubecontainer.Container.
 func toRuntimeContainer(c *docker.APIContainers) (*kubecontainer.Container, error) {
@@ -37,12 +54,18 @@ func toRuntimeContainer(c *docker.APIContainers) (*kubecontainer.Container, erro
 	if err != nil {
 		return nil, err
 	}
+
 	return &kubecontainer.Container{
-		ID:      types.UID(c.ID),
+		ID:      kubecontainer.DockerID(c.ID).ContainerID(),
 		Name:    dockerName.ContainerName,
 		Image:   c.Image,
 		Hash:    hash,
 		Created: c.Created,
+		// (random-liu) docker uses status to indicate whether a container is running or exited.
+		// However, in kubernetes we usually use state to indicate whether a container is running or exited,
+		// while use status to indicate the comprehensive status of the container. So we have different naming
+		// norm here.
+		State: mapState(c.Status),
 	}, nil
 }
 
@@ -53,8 +76,8 @@ func toRuntimeImage(image *docker.APIImages) (*kubecontainer.Image, error) {
 	}
 
 	return &kubecontainer.Image{
-		ID:   image.ID,
-		Tags: image.RepoTags,
-		Size: image.VirtualSize,
+		ID:       image.ID,
+		RepoTags: image.RepoTags,
+		Size:     image.VirtualSize,
 	}, nil
 }

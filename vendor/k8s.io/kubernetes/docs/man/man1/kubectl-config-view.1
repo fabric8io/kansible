@@ -16,7 +16,7 @@ kubectl config view \- Displays merged kubeconfig settings or a specified kubeco
 Displays merged kubeconfig settings or a specified kubeconfig file.
 
 .PP
-You can use \-\-output=template \-\-template=TEMPLATE to extract specific values.
+You can use \-\-output jsonpath={...} to extract specific values using a jsonpath expression.
 
 
 .SH OPTIONS
@@ -40,11 +40,11 @@ You can use \-\-output=template \-\-template=TEMPLATE to extract specific values
 \fB\-o\fP, \fB\-\-output\fP=""
     Output format. One of: json|yaml|wide|name|go\-template=...|go\-template\-file=...|jsonpath=...|jsonpath\-file=... See golang template [
 \[la]http://golang.org/pkg/text/template/#pkg-overview\[ra]] and jsonpath template [
-\[la]http://releases.k8s.io/release-1.1/docs/user-guide/jsonpath.md\[ra]].
+\[la]http://releases.k8s.io/release-1.2/docs/user-guide/jsonpath.md\[ra]].
 
 .PP
 \fB\-\-output\-version\fP=""
-    Output the formatted object with the given version (default api\-version).
+    Output the formatted object with the given group version (for ex: 'extensions/v1beta1').
 
 .PP
 \fB\-\-raw\fP=false
@@ -55,11 +55,15 @@ You can use \-\-output=template \-\-template=TEMPLATE to extract specific values
     When printing, show all resources (default hide terminated pods.)
 
 .PP
-\fB\-\-sort\-by\fP=""
-    If non\-empty, sort list types using this field specification.  The field specification is expressed as a JSONPath expression (e.g. 'ObjectMeta.Name'). The field in the API resource specified by this JSONPath expression must be an integer or a string.
+\fB\-\-show\-labels\fP=false
+    When printing, show all labels as the last column (default hide labels column)
 
 .PP
-\fB\-t\fP, \fB\-\-template\fP=""
+\fB\-\-sort\-by\fP=""
+    If non\-empty, sort list types using this field specification.  The field specification is expressed as a JSONPath expression (e.g. '{.metadata.name}'). The field in the API resource specified by this JSONPath expression must be an integer or a string.
+
+.PP
+\fB\-\-template\fP=""
     Template string or path to template file to use when \-o=go\-template, \-o=go\-template\-file. The template format is golang templates [
 \[la]http://golang.org/pkg/text/template/#pkg-overview\[ra]].
 
@@ -71,7 +75,7 @@ You can use \-\-output=template \-\-template=TEMPLATE to extract specific values
 
 .PP
 \fB\-\-api\-version\fP=""
-    The API version to use when talking to the server
+    DEPRECATED: The API version to use when talking to the server
 
 .PP
 \fB\-\-certificate\-authority\fP=""
@@ -79,7 +83,7 @@ You can use \-\-output=template \-\-template=TEMPLATE to extract specific values
 
 .PP
 \fB\-\-client\-certificate\fP=""
-    Path to a client key file for TLS.
+    Path to a client certificate file for TLS.
 
 .PP
 \fB\-\-client\-key\fP=""
@@ -164,10 +168,10 @@ You can use \-\-output=template \-\-template=TEMPLATE to extract specific values
 
 .nf
 # Show Merged kubeconfig settings.
-$ kubectl config view
+kubectl config view
 
 # Get the password for the e2e user
-$ kubectl config view \-o template \-\-template='{{range .users}}{{ if eq .name "e2e" }}{{ index .user.password }}{{end}}{{end}}'
+kubectl config view \-o jsonpath='{.users[?(@.name == "e2e")].user.password}'
 
 .fi
 .RE

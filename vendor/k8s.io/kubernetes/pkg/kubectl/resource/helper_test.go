@@ -28,6 +28,7 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/testapi"
+	apitesting "k8s.io/kubernetes/pkg/api/testing"
 	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/client/unversioned/fake"
 	"k8s.io/kubernetes/pkg/labels"
@@ -129,13 +130,11 @@ func TestHelperCreate(t *testing.T) {
 		return true
 	}
 
-	grace := int64(30)
 	tests := []struct {
-		Resp     *http.Response
-		RespFunc fake.HTTPClientFunc
-		HttpErr  error
-		Modify   bool
-		Object   runtime.Object
+		Resp    *http.Response
+		HttpErr error
+		Modify  bool
+		Object  runtime.Object
 
 		ExpectObject runtime.Object
 		Err          bool
@@ -172,19 +171,11 @@ func TestHelperCreate(t *testing.T) {
 			Modify: true,
 			Object: &api.Pod{
 				ObjectMeta: api.ObjectMeta{Name: "foo", ResourceVersion: "10"},
-				Spec: api.PodSpec{
-					RestartPolicy:                 api.RestartPolicyAlways,
-					DNSPolicy:                     api.DNSClusterFirst,
-					TerminationGracePeriodSeconds: &grace,
-				},
+				Spec:       apitesting.DeepEqualSafePodSpec(),
 			},
 			ExpectObject: &api.Pod{
 				ObjectMeta: api.ObjectMeta{Name: "foo"},
-				Spec: api.PodSpec{
-					RestartPolicy:                 api.RestartPolicyAlways,
-					DNSPolicy:                     api.DNSClusterFirst,
-					TerminationGracePeriodSeconds: &grace,
-				},
+				Spec:       apitesting.DeepEqualSafePodSpec(),
 			},
 			Resp: &http.Response{StatusCode: http.StatusOK, Body: objBody(&unversioned.Status{Status: unversioned.StatusSuccess})},
 			Req:  expectPost,
@@ -196,12 +187,8 @@ func TestHelperCreate(t *testing.T) {
 			Resp:  test.Resp,
 			Err:   test.HttpErr,
 		}
-		if test.RespFunc != nil {
-			client.Client = test.RespFunc
-		}
 		modifier := &Helper{
 			RESTClient:      client,
-			Codec:           testapi.Default.Codec(),
 			Versioner:       testapi.Default.MetadataAccessor(),
 			NamespaceScoped: true,
 		}
@@ -282,7 +269,7 @@ func TestHelperGet(t *testing.T) {
 			RESTClient:      client,
 			NamespaceScoped: true,
 		}
-		obj, err := modifier.Get("bar", "foo")
+		obj, err := modifier.Get("bar", "foo", false)
 		if (err != nil) != test.Err {
 			t.Errorf("unexpected error: %t %v", test.Err, err)
 		}
@@ -335,7 +322,7 @@ func TestHelperList(t *testing.T) {
 					t.Errorf("url doesn't contain name: %#v", req.URL)
 					return false
 				}
-				if req.URL.Query().Get(unversioned.LabelSelectorQueryParam(testapi.Default.Version())) != labels.SelectorFromSet(labels.Set{"foo": "baz"}).String() {
+				if req.URL.Query().Get(unversioned.LabelSelectorQueryParam(testapi.Default.GroupVersion().String())) != labels.SelectorFromSet(labels.Set{"foo": "baz"}).String() {
 					t.Errorf("url doesn't contain query parameters: %#v", req.URL)
 					return false
 				}
@@ -353,7 +340,7 @@ func TestHelperList(t *testing.T) {
 			RESTClient:      client,
 			NamespaceScoped: true,
 		}
-		obj, err := modifier.List("bar", testapi.Default.Version(), labels.SelectorFromSet(labels.Set{"foo": "baz"}))
+		obj, err := modifier.List("bar", testapi.Default.GroupVersion().String(), labels.SelectorFromSet(labels.Set{"foo": "baz"}), false)
 		if (err != nil) != test.Err {
 			t.Errorf("unexpected error: %t %v", test.Err, err)
 		}
@@ -370,41 +357,42 @@ func TestHelperList(t *testing.T) {
 }
 
 func TestHelperReplace(t *testing.T) {
-	expectPut := func(req *http.Request) bool {
+	expectPut := func(path string, req *http.Request) bool {
 		if req.Method != "PUT" {
 			t.Errorf("unexpected method: %#v", req)
 			return false
 		}
-		parts := splitPath(req.URL.Path)
-		if parts[1] != "bar" {
-			t.Errorf("url doesn't contain namespace: %#v", req.URL)
-			return false
-		}
-		if parts[2] != "foo" {
-			t.Errorf("url doesn't contain name: %#v", req)
+		if req.URL.Path != path {
+			t.Errorf("unexpected url: %v", req.URL)
 			return false
 		}
 		return true
 	}
 
-	grace := int64(30)
 	tests := []struct {
-		Resp      *http.Response
-		RespFunc  fake.HTTPClientFunc
-		HttpErr   error
-		Overwrite bool
-		Object    runtime.Object
+		Resp            *http.Response
+		HTTPClient      *http.Client
+		HttpErr         error
+		Overwrite       bool
+		Object          runtime.Object
+		Namespace       string
+		NamespaceScoped bool
 
+		ExpectPath   string
 		ExpectObject runtime.Object
 		Err          bool
-		Req          func(*http.Request) bool
+		Req          func(string, *http.Request) bool
 	}{
 		{
-			HttpErr: errors.New("failure"),
-			Err:     true,
+			Namespace:       "bar",
+			NamespaceScoped: true,
+			HttpErr:         errors.New("failure"),
+			Err:             true,
 		},
 		{
-			Object: &api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo"}},
+			Namespace:       "bar",
+			NamespaceScoped: true,
+			Object:          &api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo"}},
 			Resp: &http.Response{
 				StatusCode: http.StatusNotFound,
 				Body:       objBody(&unversioned.Status{Status: unversioned.StatusFailure}),
@@ -412,77 +400,93 @@ func TestHelperReplace(t *testing.T) {
 			Err: true,
 		},
 		{
-			Object:       &api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo"}},
-			ExpectObject: &api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo"}},
+			Namespace:       "bar",
+			NamespaceScoped: true,
+			Object:          &api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo"}},
+			ExpectPath:      "/namespaces/bar/foo",
+			ExpectObject:    &api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo"}},
 			Resp: &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       objBody(&unversioned.Status{Status: unversioned.StatusSuccess}),
 			},
 			Req: expectPut,
 		},
+		// namespace scoped resource
 		{
+			Namespace:       "bar",
+			NamespaceScoped: true,
 			Object: &api.Pod{
 				ObjectMeta: api.ObjectMeta{Name: "foo"},
-				Spec: api.PodSpec{
-					RestartPolicy:                 api.RestartPolicyAlways,
-					DNSPolicy:                     api.DNSClusterFirst,
-					TerminationGracePeriodSeconds: &grace,
-				},
+				Spec:       apitesting.DeepEqualSafePodSpec(),
 			},
+			ExpectPath: "/namespaces/bar/foo",
 			ExpectObject: &api.Pod{
 				ObjectMeta: api.ObjectMeta{Name: "foo", ResourceVersion: "10"},
-				Spec: api.PodSpec{
-					RestartPolicy:                 api.RestartPolicyAlways,
-					DNSPolicy:                     api.DNSClusterFirst,
-					TerminationGracePeriodSeconds: &grace,
-				},
+				Spec:       apitesting.DeepEqualSafePodSpec(),
 			},
 			Overwrite: true,
-			RespFunc: func(req *http.Request) (*http.Response, error) {
+			HTTPClient: fake.CreateHTTPClient(func(req *http.Request) (*http.Response, error) {
 				if req.Method == "PUT" {
 					return &http.Response{StatusCode: http.StatusOK, Body: objBody(&unversioned.Status{Status: unversioned.StatusSuccess})}, nil
 				}
 				return &http.Response{StatusCode: http.StatusOK, Body: objBody(&api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo", ResourceVersion: "10"}})}, nil
+			}),
+			Req: expectPut,
+		},
+		// cluster scoped resource
+		{
+			Object: &api.Node{
+				ObjectMeta: api.ObjectMeta{Name: "foo"},
 			},
+			ExpectObject: &api.Node{
+				ObjectMeta: api.ObjectMeta{Name: "foo", ResourceVersion: "10"},
+			},
+			Overwrite:  true,
+			ExpectPath: "/foo",
+			HTTPClient: fake.CreateHTTPClient(func(req *http.Request) (*http.Response, error) {
+				if req.Method == "PUT" {
+					return &http.Response{StatusCode: http.StatusOK, Body: objBody(&unversioned.Status{Status: unversioned.StatusSuccess})}, nil
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: objBody(&api.Node{ObjectMeta: api.ObjectMeta{Name: "foo", ResourceVersion: "10"}})}, nil
+			}),
 			Req: expectPut,
 		},
 		{
-			Object:       &api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo", ResourceVersion: "10"}},
-			ExpectObject: &api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo", ResourceVersion: "10"}},
-			Resp:         &http.Response{StatusCode: http.StatusOK, Body: objBody(&unversioned.Status{Status: unversioned.StatusSuccess})},
-			Req:          expectPut,
+			Namespace:       "bar",
+			NamespaceScoped: true,
+			Object:          &api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo", ResourceVersion: "10"}},
+			ExpectPath:      "/namespaces/bar/foo",
+			ExpectObject:    &api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo", ResourceVersion: "10"}},
+			Resp:            &http.Response{StatusCode: http.StatusOK, Body: objBody(&unversioned.Status{Status: unversioned.StatusSuccess})},
+			Req:             expectPut,
 		},
 	}
 	for i, test := range tests {
 		client := &fake.RESTClient{
-			Codec: testapi.Default.Codec(),
-			Resp:  test.Resp,
-			Err:   test.HttpErr,
-		}
-		if test.RespFunc != nil {
-			client.Client = test.RespFunc
+			Client: test.HTTPClient,
+			Codec:  testapi.Default.Codec(),
+			Resp:   test.Resp,
+			Err:    test.HttpErr,
 		}
 		modifier := &Helper{
 			RESTClient:      client,
-			Codec:           testapi.Default.Codec(),
 			Versioner:       testapi.Default.MetadataAccessor(),
-			NamespaceScoped: true,
+			NamespaceScoped: test.NamespaceScoped,
 		}
-		_, err := modifier.Replace("bar", "foo", test.Overwrite, test.Object)
+		_, err := modifier.Replace(test.Namespace, "foo", test.Overwrite, test.Object)
 		if (err != nil) != test.Err {
 			t.Errorf("%d: unexpected error: %t %v", i, test.Err, err)
 		}
 		if err != nil {
 			continue
 		}
-		if test.Req != nil && !test.Req(client.Req) {
+		if test.Req != nil && !test.Req(test.ExpectPath, client.Req) {
 			t.Errorf("%d: unexpected request: %#v", i, client.Req)
 		}
 		body, err := ioutil.ReadAll(client.Req.Body)
 		if err != nil {
 			t.Fatalf("%d: unexpected error: %#v", i, err)
 		}
-		t.Logf("got body: %s", string(body))
 		expect := []byte{}
 		if test.ExpectObject != nil {
 			expect = []byte(runtime.EncodeOrDie(testapi.Default.Codec(), test.ExpectObject))

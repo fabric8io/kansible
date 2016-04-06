@@ -1,4 +1,4 @@
-# Copyright 2014 Google Inc. All rights reserved.
+# Copyright 2016 The Kubernetes Authors All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,33 +13,11 @@
 # limitations under the License.
 
 # This file creates a standard build environment for building Kubernetes
+FROM gcr.io/google_containers/kube-cross:KUBE_BUILD_IMAGE_CROSS_TAG
 
-FROM kube-build:cross
-MAINTAINER  Joe Beda <jbeda@google.com>
-
-# (set an explicit GOARM of 5 for maximum compatibility)
-ENV GOARM 5
-ENV GOOS    linux
-ENV GOARCH  amd64
-
-# work around 64MB tmpfs size in Docker 1.6
-ENV TMPDIR /tmp.k8s
-
-# Get the code coverage tool and godep
-RUN mkdir $TMPDIR && \
-    go get golang.org/x/tools/cmd/cover github.com/tools/godep
-
-# We use rsync to copy some binaries around.  It is faster (0.3s vs. 1.1s) on my
-# machine vs. `install`
-RUN rm -rf /var/lib/apt/lists/
-RUN apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y rsync
-
-# Download and symlink etcd.  We need this for our integration tests.
-RUN mkdir -p /usr/local/src/etcd &&\
-    cd /usr/local/src/etcd &&\
-    curl -L -O -s https://github.com/coreos/etcd/releases/download/v2.0.0/etcd-v2.0.0-linux-amd64.tar.gz &&\
-    tar xzf etcd-v2.0.0-linux-amd64.tar.gz &&\
-    ln -s ../src/etcd/etcd-v2.0.0-linux-amd64/etcd /usr/local/bin/
+ENV http_proxy=KUBE_BUILD_HTTP_PROXY \
+  https_proxy=KUBE_BUILD_HTTPS_PROXY \
+  no_proxy=KUBE_BUILD_NO_PROXY
 
 # Mark this as a kube-build container
 RUN touch /kube-build-image
@@ -54,4 +32,4 @@ ENV KUBE_GIT_VERSION_FILE /kube-version-defs
 ENV KUBE_OUTPUT_SUBPATH _output/dockerized
 
 # Upload Kubernetes source
-ADD kube-source.tar.gz /go/src/k8s.io/kubernetes
+ADD kube-source.tar.gz /go/src/k8s.io/kubernetes/

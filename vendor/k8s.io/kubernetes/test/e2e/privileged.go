@@ -19,13 +19,14 @@ package e2e
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/latest"
 	"k8s.io/kubernetes/pkg/api/unversioned"
+	"k8s.io/kubernetes/pkg/apimachinery/registered"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
-	"net/url"
 )
 
 const (
@@ -36,30 +37,23 @@ const (
 	notPrivilegedHttpPort      = 9090
 	notPrivilegedUdpPort       = 9091
 	notPrivilegedContainerName = "not-privileged-container"
-	privilegedContainerImage   = "gcr.io/google_containers/netexec:1.1"
+	privilegedContainerImage   = "gcr.io/google_containers/netexec:1.4"
 	privilegedCommand          = "ip link add dummy1 type dummy"
 )
 
 type PrivilegedPodTestConfig struct {
 	privilegedPod *api.Pod
 	f             *Framework
-	nodes         []string
+	hostExecPod   *api.Pod
 }
 
 var _ = Describe("PrivilegedPod", func() {
-	f := NewFramework("e2e-privilegedpod")
+	f := NewDefaultFramework("e2e-privilegedpod")
 	config := &PrivilegedPodTestConfig{
 		f: f,
 	}
 	It("should test privileged pod", func() {
-
-		By("Getting ssh-able hosts")
-		hosts, err := NodeSSHHosts(config.f.Client)
-		Expect(err).NotTo(HaveOccurred())
-		if len(hosts) == 0 {
-			Failf("No ssh-able nodes")
-		}
-		config.nodes = hosts
+		config.hostExecPod = LaunchHostExecPod(config.f.Client, config.f.Namespace.Name, "hostexec")
 
 		By("Creating a privileged pod")
 		config.createPrivilegedPod()
@@ -95,8 +89,7 @@ func (config *PrivilegedPodTestConfig) dialFromContainer(containerIP string, con
 		v.Encode())
 
 	By(fmt.Sprintf("Exec-ing into container over http. Running command:%s", cmd))
-	stdout := config.ssh(cmd)
-	Logf("Output is %q", stdout)
+	stdout := RunHostCmdOrDie(config.hostExecPod.Namespace, config.hostExecPod.Name, cmd)
 	var output map[string]string
 	err := json.Unmarshal([]byte(stdout), &output)
 	Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Could not unmarshal curl response: %s", stdout))
@@ -110,7 +103,7 @@ func (config *PrivilegedPodTestConfig) createPrivilegedPodSpec() *api.Pod {
 	pod := &api.Pod{
 		TypeMeta: unversioned.TypeMeta{
 			Kind:       "Pod",
-			APIVersion: latest.GroupOrDie("").Version,
+			APIVersion: registered.GroupOrDie(api.GroupName).GroupVersion.String(),
 		},
 		ObjectMeta: api.ObjectMeta{
 			Name:      privilegedPodName,
@@ -170,11 +163,4 @@ func (config *PrivilegedPodTestConfig) getPodClient() client.PodInterface {
 
 func (config *PrivilegedPodTestConfig) getNamespaceClient() client.NamespaceInterface {
 	return config.f.Client.Namespaces()
-}
-
-func (config *PrivilegedPodTestConfig) ssh(cmd string) string {
-	stdout, _, code, err := SSH(cmd, config.nodes[0], testContext.Provider)
-	Expect(err).NotTo(HaveOccurred(), "error while SSH-ing to node: %v (code %v)", err, code)
-	Expect(code).Should(BeZero(), "command exited with non-zero code %v. cmd:%s", code, cmd)
-	return stdout
 }

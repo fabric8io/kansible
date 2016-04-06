@@ -21,9 +21,10 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/builder/parser"
+	"github.com/docker/docker/cliconfig"
 	"github.com/docker/docker/daemon"
 	"github.com/docker/docker/graph"
-	imagepkg "github.com/docker/docker/image"
+	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/chrootarchive"
 	"github.com/docker/docker/pkg/httputils"
@@ -39,27 +40,37 @@ import (
 	"github.com/docker/docker/runconfig"
 )
 
-func (b *Builder) readContext(context io.Reader) error {
+func (b *Builder) readContext(context io.Reader) (err error) {
 	tmpdirPath, err := ioutil.TempDir("", "docker-build")
 	if err != nil {
-		return err
+		return
 	}
+
+	// Make sure we clean-up upon error.  In the happy case the caller
+	// is expected to manage the clean-up
+	defer func() {
+		if err != nil {
+			if e := os.RemoveAll(tmpdirPath); e != nil {
+				logrus.Debugf("[BUILDER] failed to remove temporary context: %s", e)
+			}
+		}
+	}()
 
 	decompressedStream, err := archive.DecompressStream(context)
 	if err != nil {
-		return err
+		return
 	}
 
 	if b.context, err = tarsum.NewTarSum(decompressedStream, true, tarsum.Version1); err != nil {
-		return err
+		return
 	}
 
-	if err := chrootarchive.Untar(b.context, tmpdirPath, nil); err != nil {
-		return err
+	if err = chrootarchive.Untar(b.context, tmpdirPath, nil); err != nil {
+		return
 	}
 
 	b.contextPath = tmpdirPath
-	return nil
+	return
 }
 
 func (b *Builder) commit(id string, autoCmd *runconfig.Command, comment string) error {
@@ -107,11 +118,19 @@ func (b *Builder) commit(id string, autoCmd *runconfig.Command, comment string) 
 	autoConfig := *b.Config
 	autoConfig.Cmd = autoCmd
 
+	commitCfg := &daemon.ContainerCommitConfig{
+		Author: b.maintainer,
+		Pause:  true,
+		Config: &autoConfig,
+	}
+
 	// Commit the container
-	image, err := b.Daemon.Commit(container, "", "", "", b.maintainer, true, &autoConfig)
+	image, err := b.Daemon.Commit(container, commitCfg)
 	if err != nil {
 		return err
 	}
+	b.Daemon.Graph().Retain(b.id, image.ID)
+	b.activeImages = append(b.activeImages, image.ID)
 	b.image = image.ID
 	return nil
 }
@@ -133,7 +152,8 @@ func (b *Builder) runContextCommand(args []string, allowRemote bool, allowDecomp
 		return fmt.Errorf("Invalid %s format - at least two arguments required", cmdName)
 	}
 
-	dest := args[len(args)-1] // last one is always the dest
+	// Work in daemon-specific filepath semantics
+	dest := filepath.FromSlash(args[len(args)-1]) // last one is always the dest
 
 	copyInfos := []*copyInfo{}
 
@@ -168,8 +188,7 @@ func (b *Builder) runContextCommand(args []string, allowRemote bool, allowDecomp
 	if len(copyInfos) == 0 {
 		return fmt.Errorf("No source files were specified")
 	}
-
-	if len(copyInfos) > 1 && !strings.HasSuffix(dest, "/") {
+	if len(copyInfos) > 1 && !strings.HasSuffix(dest, string(os.PathSeparator)) {
 		return fmt.Errorf("When using %s with more than one source file, the destination must be a directory and end with a /", cmdName)
 	}
 
@@ -222,10 +241,18 @@ func (b *Builder) runContextCommand(args []string, allowRemote bool, allowDecomp
 	}
 	defer container.Unmount()
 
+	if err := container.PrepareStorage(); err != nil {
+		return err
+	}
+
 	for _, ci := range copyInfos {
 		if err := b.addContext(container, ci.origPath, ci.destPath, ci.decompress); err != nil {
 			return err
 		}
+	}
+
+	if err := container.CleanupStorage(); err != nil {
+		return err
 	}
 
 	if err := b.commit(container.ID, cmd, fmt.Sprintf("%s %s in %s", cmdName, origPaths, dest)); err != nil {
@@ -236,25 +263,37 @@ func (b *Builder) runContextCommand(args []string, allowRemote bool, allowDecomp
 
 func calcCopyInfo(b *Builder, cmdName string, cInfos *[]*copyInfo, origPath string, destPath string, allowRemote bool, allowDecompression bool, allowWildcards bool) error {
 
-	if origPath != "" && origPath[0] == '/' && len(origPath) > 1 {
+	// Work in daemon-specific OS filepath semantics. However, we save
+	// the the origPath passed in here, as it might also be a URL which
+	// we need to check for in this function.
+	passedInOrigPath := origPath
+	origPath = filepath.FromSlash(origPath)
+	destPath = filepath.FromSlash(destPath)
+
+	if origPath != "" && origPath[0] == os.PathSeparator && len(origPath) > 1 {
 		origPath = origPath[1:]
 	}
-	origPath = strings.TrimPrefix(origPath, "./")
+	origPath = strings.TrimPrefix(origPath, "."+string(os.PathSeparator))
 
 	// Twiddle the destPath when its a relative path - meaning, make it
 	// relative to the WORKINGDIR
 	if !filepath.IsAbs(destPath) {
-		hasSlash := strings.HasSuffix(destPath, "/")
-		destPath = filepath.Join("/", b.Config.WorkingDir, destPath)
+		hasSlash := strings.HasSuffix(destPath, string(os.PathSeparator))
+		destPath = filepath.Join(string(os.PathSeparator), filepath.FromSlash(b.Config.WorkingDir), destPath)
 
 		// Make sure we preserve any trailing slash
 		if hasSlash {
-			destPath += "/"
+			destPath += string(os.PathSeparator)
 		}
 	}
 
 	// In the remote/URL case, download it and gen its hashcode
-	if urlutil.IsURL(origPath) {
+	if urlutil.IsURL(passedInOrigPath) {
+
+		// As it's a URL, we go back to processing on what was passed in
+		// to this function
+		origPath = passedInOrigPath
+
 		if !allowRemote {
 			return fmt.Errorf("Source can't be a URL for %s", cmdName)
 		}
@@ -323,16 +362,16 @@ func calcCopyInfo(b *Builder, cmdName string, cInfos *[]*copyInfo, origPath stri
 		ci.origPath = filepath.Join(filepath.Base(tmpDirName), filepath.Base(tmpFileName))
 
 		// If the destination is a directory, figure out the filename.
-		if strings.HasSuffix(ci.destPath, "/") {
+		if strings.HasSuffix(ci.destPath, string(os.PathSeparator)) {
 			u, err := url.Parse(origPath)
 			if err != nil {
 				return err
 			}
 			path := u.Path
-			if strings.HasSuffix(path, "/") {
+			if strings.HasSuffix(path, string(os.PathSeparator)) {
 				path = path[:len(path)-1]
 			}
-			parts := strings.Split(path, "/")
+			parts := strings.Split(path, string(os.PathSeparator))
 			filename := parts[len(parts)-1]
 			if filename == "" {
 				return fmt.Errorf("cannot determine filename from url: %s", u)
@@ -407,11 +446,11 @@ func calcCopyInfo(b *Builder, cmdName string, cInfos *[]*copyInfo, origPath stri
 	// Add a trailing / to make sure we only pick up nested files under
 	// the dir and not sibling files of the dir that just happen to
 	// start with the same chars
-	if !strings.HasSuffix(absOrigPath, "/") {
-		absOrigPath += "/"
+	if !strings.HasSuffix(absOrigPath, string(os.PathSeparator)) {
+		absOrigPath += string(os.PathSeparator)
 	}
 
-	// Need path w/o / too to find matching dir w/o trailing /
+	// Need path w/o slash too to find matching dir w/o trailing slash
 	absOrigPathNoSlash := absOrigPath[:len(absOrigPath)-1]
 
 	for _, fileInfo := range b.context.GetSums() {
@@ -448,21 +487,25 @@ func ContainsWildcards(name string) bool {
 	return false
 }
 
-func (b *Builder) pullImage(name string) (*imagepkg.Image, error) {
+func (b *Builder) pullImage(name string) (*image.Image, error) {
 	remote, tag := parsers.ParseRepositoryTag(name)
 	if tag == "" {
 		tag = "latest"
 	}
 
-	pullRegistryAuth := b.AuthConfig
-	if len(b.ConfigFile.AuthConfigs) > 0 {
+	pullRegistryAuth := &cliconfig.AuthConfig{}
+	if len(b.AuthConfigs) > 0 {
 		// The request came with a full auth config file, we prefer to use that
 		repoInfo, err := b.Daemon.RegistryService.ResolveRepository(remote)
 		if err != nil {
 			return nil, err
 		}
-		resolvedAuth := registry.ResolveAuthConfig(b.ConfigFile, repoInfo.Index)
-		pullRegistryAuth = &resolvedAuth
+
+		resolvedConfig := registry.ResolveAuthConfig(
+			&cliconfig.ConfigFile{AuthConfigs: b.AuthConfigs},
+			repoInfo.Index,
+		)
+		pullRegistryAuth = &resolvedConfig
 	}
 
 	imagePullConfig := &graph.ImagePullConfig{
@@ -482,14 +525,15 @@ func (b *Builder) pullImage(name string) (*imagepkg.Image, error) {
 	return image, nil
 }
 
-func (b *Builder) processImageFrom(img *imagepkg.Image) error {
+func (b *Builder) processImageFrom(img *image.Image) error {
 	b.image = img.ID
 
 	if img.Config != nil {
 		b.Config = img.Config
 	}
 
-	if len(b.Config.Env) == 0 {
+	// The default path will be blank on Windows (set by HCS)
+	if len(b.Config.Env) == 0 && daemon.DefaultPathEnv != "" {
 		b.Config.Env = append(b.Config.Env, "PATH="+daemon.DefaultPathEnv)
 	}
 
@@ -551,6 +595,8 @@ func (b *Builder) probeCache() (bool, error) {
 	fmt.Fprintf(b.OutStream, " ---> Using cache\n")
 	logrus.Debugf("[BUILDER] Use cached version")
 	b.image = cache.ID
+	b.Daemon.Graph().Retain(b.id, cache.ID)
+	b.activeImages = append(b.activeImages, cache.ID)
 	return true, nil
 }
 
@@ -569,7 +615,6 @@ func (b *Builder) create() (*daemon.Container, error) {
 		CgroupParent: b.cgroupParent,
 		Memory:       b.memory,
 		MemorySwap:   b.memorySwap,
-		NetworkMode:  "bridge",
 	}
 
 	config := *b.Config
@@ -671,19 +716,23 @@ func (b *Builder) addContext(container *daemon.Container, orig, dest string, dec
 		destPath   string
 	)
 
+	// Work in daemon-local OS specific file paths
+	dest = filepath.FromSlash(dest)
+
 	destPath, err = container.GetResourcePath(dest)
 	if err != nil {
 		return err
 	}
 
-	// Preserve the trailing '/'
-	if strings.HasSuffix(dest, "/") || dest == "." {
-		destPath = destPath + "/"
+	// Preserve the trailing slash
+	if strings.HasSuffix(dest, string(os.PathSeparator)) || dest == "." {
+		destPath = destPath + string(os.PathSeparator)
 	}
 
 	destStat, err := os.Stat(destPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
+			logrus.Errorf("Error performing os.Stat on %s. %s", destPath, err)
 			return err
 		}
 		destExists = false
@@ -706,9 +755,9 @@ func (b *Builder) addContext(container *daemon.Container, orig, dest string, dec
 		// First try to unpack the source as an archive
 		// to support the untar feature we need to clean up the path a little bit
 		// because tar is very forgiving.  First we need to strip off the archive's
-		// filename from the path but this is only added if it does not end in / .
+		// filename from the path but this is only added if it does not end in slash
 		tarDest := destPath
-		if strings.HasSuffix(tarDest, "/") {
+		if strings.HasSuffix(tarDest, string(os.PathSeparator)) {
 			tarDest = filepath.Dir(destPath)
 		}
 

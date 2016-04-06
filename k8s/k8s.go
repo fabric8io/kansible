@@ -27,6 +27,7 @@ import (
 	"k8s.io/kubernetes/pkg/kubectl"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/kubectl/resource"
+	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/util/strategicpatch"
 
 	"github.com/ghodss/yaml"
@@ -269,7 +270,7 @@ func ApplyResource(f *cmdutil.Factory, c *client.Client, ns string, data []byte,
 	}
 
 	mapper, typer := f.Object()
-	r := resource.NewBuilder(mapper, typer, f.ClientMapperForCommand()).
+	r := resource.NewBuilder(mapper, typer, resource.ClientMapperFunc(f.ClientForMapping), f.Decoder(true)).
 		Schema(schema).
 		ContinueOnError().
 		NamespaceParam(ns).DefaultNamespace().
@@ -293,7 +294,7 @@ func ApplyResource(f *cmdutil.Factory, c *client.Client, ns string, data []byte,
 		// Get the modified configuration of the object. Embed the result
 		// as an annotation in the modified configuration, so that it will appear
 		// in the patch sent to the server.
-		modified, err := kubectl.GetModifiedConfiguration(info, true)
+		modified, err := kubectl.GetModifiedConfiguration(info, true, f.JSONEncoder())
 		if err != nil {
 			return cmdutil.AddSourceToErr(fmt.Sprintf("retrieving modified configuration from:\n%v\nfor:", info), info.Source, err)
 		}
@@ -303,7 +304,7 @@ func ApplyResource(f *cmdutil.Factory, c *client.Client, ns string, data []byte,
 		}
 
 		// Serialize the current configuration of the object from the server.
-		current, err := info.Mapping.Codec.Encode(info.Object)
+		current, err := runtime.Encode(f.JSONEncoder(), info.Object)
 		if err != nil {
 			return cmdutil.AddSourceToErr(fmt.Sprintf("serializing current configuration from:\n%v\nfor:", info), info.Source, err)
 		}

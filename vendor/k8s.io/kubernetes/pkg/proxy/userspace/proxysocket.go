@@ -28,7 +28,7 @@ import (
 	"github.com/golang/glog"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/proxy"
-	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/util/runtime"
 )
 
 // Abstraction over TCP/UDP sockets which are proxied.
@@ -153,8 +153,6 @@ func proxyTCP(in, out *net.TCPConn) {
 	go copyBytes("from backend", in, out, &wg)
 	go copyBytes("to backend", out, in, &wg)
 	wg.Wait()
-	in.Close()
-	out.Close()
 }
 
 func copyBytes(direction string, dest, src *net.TCPConn, wg *sync.WaitGroup) {
@@ -162,11 +160,13 @@ func copyBytes(direction string, dest, src *net.TCPConn, wg *sync.WaitGroup) {
 	glog.V(4).Infof("Copying %s: %s -> %s", direction, src.RemoteAddr(), dest.RemoteAddr())
 	n, err := io.Copy(dest, src)
 	if err != nil {
-		glog.Errorf("I/O error: %v", err)
+		if !isClosedError(err) {
+			glog.Errorf("I/O error: %v", err)
+		}
 	}
 	glog.V(4).Infof("Copied %d bytes %s: %s -> %s", n, direction, src.RemoteAddr(), dest.RemoteAddr())
-	dest.CloseWrite()
-	src.CloseRead()
+	dest.Close()
+	src.Close()
 }
 
 // udpProxySocket implements proxySocket.  Close() is implemented by net.UDPConn.  When Close() is called,
@@ -259,7 +259,7 @@ func (udp *udpProxySocket) getBackendConn(activeClients *clientCache, cliAddr ne
 		}
 		activeClients.clients[cliAddr.String()] = svrConn
 		go func(cliAddr net.Addr, svrConn net.Conn, activeClients *clientCache, timeout time.Duration) {
-			defer util.HandleCrash()
+			defer runtime.HandleCrash()
 			udp.proxyClient(cliAddr, svrConn, activeClients, timeout)
 		}(cliAddr, svrConn, activeClients, timeout)
 	}

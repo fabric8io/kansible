@@ -33,11 +33,14 @@ import (
 
 // PluginFactoryArgs are passed to all plugin factory functions.
 type PluginFactoryArgs struct {
-	algorithm.PodLister
-	algorithm.ServiceLister
-	algorithm.ControllerLister
-	NodeLister algorithm.NodeLister
-	NodeInfo   predicates.NodeInfo
+	PodLister        algorithm.PodLister
+	ServiceLister    algorithm.ServiceLister
+	ControllerLister algorithm.ControllerLister
+	ReplicaSetLister algorithm.ReplicaSetLister
+	NodeLister       algorithm.NodeLister
+	NodeInfo         predicates.NodeInfo
+	PVInfo           predicates.PersistentVolumeInfo
+	PVCInfo          predicates.PersistentVolumeClaimInfo
 }
 
 // A FitPredicateFactory produces a FitPredicate from the given args.
@@ -166,6 +169,7 @@ func RegisterCustomPriorityFunction(policy schedulerapi.PriorityPolicy) string {
 			pcf = &PriorityConfigFactory{
 				Function: func(args PluginFactoryArgs) algorithm.PriorityFunction {
 					return priorities.NewServiceAntiAffinityPriority(
+						args.PodLister,
 						args.ServiceLister,
 						policy.Argument.ServiceAntiAffinity.Label,
 					)
@@ -271,7 +275,7 @@ var validName = regexp.MustCompile("^[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])$")
 
 func validateAlgorithmNameOrDie(name string) {
 	if !validName.MatchString(name) {
-		glog.Fatalf("algorithm name %v does not match the name validation regexp \"%v\".", name, validName)
+		glog.Fatalf("Algorithm name %v does not match the name validation regexp \"%v\".", name, validName)
 	}
 }
 
@@ -285,7 +289,7 @@ func validatePredicateOrDie(predicate schedulerapi.PredicatePolicy) {
 			numArgs++
 		}
 		if numArgs != 1 {
-			glog.Fatalf("Exactly 1 predicate argument is required")
+			glog.Fatalf("Exactly 1 predicate argument is required, numArgs: %v", numArgs)
 		}
 	}
 }

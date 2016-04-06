@@ -1,6 +1,7 @@
 package vcs
 
 import (
+	"encoding/xml"
 	"os"
 	"os/exec"
 	"regexp"
@@ -163,4 +164,46 @@ func (s *SvnRepo) IsReference(r string) bool {
 func (s *SvnRepo) IsDirty() bool {
 	out, err := s.runFromDir("svn", "diff")
 	return err != nil || len(out) != 0
+}
+
+// CommitInfo retrieves metadata about a commit.
+func (s *SvnRepo) CommitInfo(id string) (*CommitInfo, error) {
+	out, err := s.runFromDir("svn", "log", "-r", id, "--xml")
+	if err != nil {
+		return nil, err
+	}
+
+	type Logentry struct {
+		Author string `xml:"author"`
+		Date   string `xml:"date"`
+		Msg    string `xml:"msg"`
+	}
+	type Log struct {
+		XMLName xml.Name   `xml:"log"`
+		Logs    []Logentry `xml:"logentry"`
+	}
+
+	logs := &Log{}
+	err = xml.Unmarshal(out, &logs)
+	if err != nil {
+		return nil, err
+	}
+	if len(logs.Logs) == 0 {
+		return nil, ErrRevisionUnavailable
+	}
+
+	ci := &CommitInfo{
+		Commit:  id,
+		Author:  logs.Logs[0].Author,
+		Message: logs.Logs[0].Msg,
+	}
+
+	if len(logs.Logs[0].Date) > 0 {
+		ci.Date, err = time.Parse(time.RFC3339Nano, logs.Logs[0].Date)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return ci, nil
 }

@@ -22,14 +22,14 @@ import (
 	"sync"
 	"time"
 
-	docker "github.com/fsouza/go-dockerclient"
 	"github.com/golang/glog"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/client/record"
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
-	"k8s.io/kubernetes/pkg/kubelet/dockertools"
-	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/kubelet/container"
+	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/util/sets"
+	"k8s.io/kubernetes/pkg/util/wait"
 )
 
 // Manages lifecycle of all images.
@@ -42,6 +42,8 @@ type imageManager interface {
 
 	// Start async garbage collection of images.
 	Start() error
+
+	GetImageList() ([]kubecontainer.Image, error)
 
 	// TODO(vmarmol): Have this subsume pulls as well.
 }
@@ -56,11 +58,14 @@ type ImageGCPolicy struct {
 	// Any usage below this threshold will never trigger garbage collection.
 	// This is the lowest threshold we will try to garbage collect to.
 	LowThresholdPercent int
+
+	// Minimum age at which a image can be garbage collected.
+	MinAge time.Duration
 }
 
 type realImageManager struct {
-	// Connection to the Docker daemon.
-	dockerClient dockertools.DockerInterface
+	// Container runtime
+	runtime container.Runtime
 
 	// Records of images and their use.
 	imageRecords     map[string]*imageRecord
@@ -77,12 +82,15 @@ type realImageManager struct {
 
 	// Reference to this node.
 	nodeRef *api.ObjectReference
+
+	// Track initialization
+	initialized bool
 }
 
 // Information about the images we track.
 type imageRecord struct {
 	// Time when this image was first detected.
-	detected time.Time
+	firstDetected time.Time
 
 	// Time when we last saw this image being used.
 	lastUsed time.Time
@@ -91,7 +99,7 @@ type imageRecord struct {
 	size int64
 }
 
-func newImageManager(dockerClient dockertools.DockerInterface, cadvisorInterface cadvisor.Interface, recorder record.EventRecorder, nodeRef *api.ObjectReference, policy ImageGCPolicy) (imageManager, error) {
+func newImageManager(runtime container.Runtime, cadvisorInterface cadvisor.Interface, recorder record.EventRecorder, nodeRef *api.ObjectReference, policy ImageGCPolicy) (imageManager, error) {
 	// Validate policy.
 	if policy.HighThresholdPercent < 0 || policy.HighThresholdPercent > 100 {
 		return nil, fmt.Errorf("invalid HighThresholdPercent %d, must be in range [0-100]", policy.HighThresholdPercent)
@@ -99,52 +107,65 @@ func newImageManager(dockerClient dockertools.DockerInterface, cadvisorInterface
 	if policy.LowThresholdPercent < 0 || policy.LowThresholdPercent > 100 {
 		return nil, fmt.Errorf("invalid LowThresholdPercent %d, must be in range [0-100]", policy.LowThresholdPercent)
 	}
+	if policy.LowThresholdPercent > policy.HighThresholdPercent {
+		return nil, fmt.Errorf("LowThresholdPercent %d can not be higher than HighThresholdPercent %d", policy.LowThresholdPercent, policy.HighThresholdPercent)
+	}
 	im := &realImageManager{
-		dockerClient: dockerClient,
+		runtime:      runtime,
 		policy:       policy,
 		imageRecords: make(map[string]*imageRecord),
 		cadvisor:     cadvisorInterface,
 		recorder:     recorder,
 		nodeRef:      nodeRef,
+		initialized:  false,
 	}
 
 	return im, nil
 }
 
 func (im *realImageManager) Start() error {
-	// Initial detection make detected time "unknown" in the past.
-	var zero time.Time
-	err := im.detectImages(zero)
-	if err != nil {
-		return err
-	}
-
-	go util.Until(func() {
-		err := im.detectImages(time.Now())
+	go wait.Until(func() {
+		// Initial detection make detected time "unknown" in the past.
+		var ts time.Time
+		if im.initialized {
+			ts = time.Now()
+		}
+		err := im.detectImages(ts)
 		if err != nil {
 			glog.Warningf("[ImageManager] Failed to monitor images: %v", err)
+		} else {
+			im.initialized = true
 		}
-	}, 5*time.Minute, util.NeverStop)
+	}, 5*time.Minute, wait.NeverStop)
 
 	return nil
 }
 
-func (im *realImageManager) detectImages(detected time.Time) error {
-	images, err := im.dockerClient.ListImages(docker.ListImagesOptions{})
+// Get a list of images on this node
+func (im *realImageManager) GetImageList() ([]kubecontainer.Image, error) {
+	images, err := im.runtime.ListImages()
+	if err != nil {
+		return nil, err
+	}
+	return images, nil
+}
+
+func (im *realImageManager) detectImages(detectTime time.Time) error {
+	images, err := im.runtime.ListImages()
 	if err != nil {
 		return err
 	}
-	containers, err := im.dockerClient.ListContainers(docker.ListContainersOptions{
-		All: true,
-	})
+	pods, err := im.runtime.GetPods(true)
 	if err != nil {
 		return err
 	}
 
 	// Make a set of images in use by containers.
 	imagesInUse := sets.NewString()
-	for _, container := range containers {
-		imagesInUse.Insert(container.Image)
+	for _, pod := range pods {
+		for _, container := range pod.Containers {
+			imagesInUse.Insert(container.Image)
+		}
 	}
 
 	// Add new images and record those being used.
@@ -158,16 +179,16 @@ func (im *realImageManager) detectImages(detected time.Time) error {
 		// New image, set it as detected now.
 		if _, ok := im.imageRecords[image.ID]; !ok {
 			im.imageRecords[image.ID] = &imageRecord{
-				detected: detected,
+				firstDetected: detectTime,
 			}
 		}
 
 		// Set last used time to now if the image is being used.
-		if isImageUsed(&image, imagesInUse) {
+		if isImageUsed(image, imagesInUse) {
 			im.imageRecords[image.ID].lastUsed = now
 		}
 
-		im.imageRecords[image.ID].size = image.VirtualSize
+		im.imageRecords[image.ID].size = image.Size
 	}
 
 	// Remove old images from our records.
@@ -192,7 +213,7 @@ func (im *realImageManager) GarbageCollect() error {
 	// Check valid capacity.
 	if capacity == 0 {
 		err := fmt.Errorf("invalid capacity %d on device %q at mount point %q", capacity, fsInfo.Device, fsInfo.Mountpoint)
-		im.recorder.Eventf(im.nodeRef, "InvalidDiskCapacity", err.Error())
+		im.recorder.Eventf(im.nodeRef, api.EventTypeWarning, container.InvalidDiskCapacity, err.Error())
 		return err
 	}
 
@@ -201,14 +222,14 @@ func (im *realImageManager) GarbageCollect() error {
 	if usagePercent >= im.policy.HighThresholdPercent {
 		amountToFree := usage - (int64(im.policy.LowThresholdPercent) * capacity / 100)
 		glog.Infof("[ImageManager]: Disk usage on %q (%s) is at %d%% which is over the high threshold (%d%%). Trying to free %d bytes", fsInfo.Device, fsInfo.Mountpoint, usagePercent, im.policy.HighThresholdPercent, amountToFree)
-		freed, err := im.freeSpace(amountToFree)
+		freed, err := im.freeSpace(amountToFree, time.Now())
 		if err != nil {
 			return err
 		}
 
 		if freed < amountToFree {
 			err := fmt.Errorf("failed to garbage collect required amount of images. Wanted to free %d, but freed %d", amountToFree, freed)
-			im.recorder.Eventf(im.nodeRef, "FreeDiskSpaceFailed", err.Error())
+			im.recorder.Eventf(im.nodeRef, api.EventTypeWarning, container.FreeDiskSpaceFailed, err.Error())
 			return err
 		}
 	}
@@ -222,9 +243,8 @@ func (im *realImageManager) GarbageCollect() error {
 // bytes freed is always returned.
 // Note that error may be nil and the number of bytes free may be less
 // than bytesToFree.
-func (im *realImageManager) freeSpace(bytesToFree int64) (int64, error) {
-	startTime := time.Now()
-	err := im.detectImages(startTime)
+func (im *realImageManager) freeSpace(bytesToFree int64, freeTime time.Time) (int64, error) {
+	err := im.detectImages(freeTime)
 	if err != nil {
 		return 0, err
 	}
@@ -247,13 +267,20 @@ func (im *realImageManager) freeSpace(bytesToFree int64) (int64, error) {
 	spaceFreed := int64(0)
 	for _, image := range images {
 		// Images that are currently in used were given a newer lastUsed.
-		if image.lastUsed.After(startTime) {
+		if image.lastUsed.After(freeTime) {
 			break
+		}
+
+		// Avoid garbage collect the image if the image is not old enough.
+		// In such a case, the image may have just been pulled down, and will be used by a container right away.
+
+		if freeTime.Sub(image.firstDetected) < im.policy.MinAge {
+			continue
 		}
 
 		// Remove image. Continue despite errors.
 		glog.Infof("[ImageManager]: Removing image %q to free %d bytes", image.id, image.size)
-		err := im.dockerClient.RemoveImage(image.id)
+		err := im.runtime.RemoveImage(container.ImageSpec{Image: image.id})
 		if err != nil {
 			lastErr = err
 			continue
@@ -281,13 +308,13 @@ func (ev byLastUsedAndDetected) Swap(i, j int) { ev[i], ev[j] = ev[j], ev[i] }
 func (ev byLastUsedAndDetected) Less(i, j int) bool {
 	// Sort by last used, break ties by detected.
 	if ev[i].lastUsed.Equal(ev[j].lastUsed) {
-		return ev[i].detected.Before(ev[j].detected)
+		return ev[i].firstDetected.Before(ev[j].firstDetected)
 	} else {
 		return ev[i].lastUsed.Before(ev[j].lastUsed)
 	}
 }
 
-func isImageUsed(image *docker.APIImages, imagesInUse sets.String) bool {
+func isImageUsed(image container.Image, imagesInUse sets.String) bool {
 	// Check the image ID and all the RepoTags.
 	if _, ok := imagesInUse[image.ID]; ok {
 		return true

@@ -22,8 +22,8 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util"
 	"k8s.io/kubernetes/pkg/util/mount"
+	"k8s.io/kubernetes/pkg/util/strings"
 	"k8s.io/kubernetes/pkg/volume"
 
 	"github.com/golang/glog"
@@ -58,8 +58,9 @@ const (
 	nfsPluginName = "kubernetes.io/nfs"
 )
 
-func (plugin *nfsPlugin) Init(host volume.VolumeHost) {
+func (plugin *nfsPlugin) Init(host volume.VolumeHost) error {
 	plugin.host = host
+	return nil
 }
 
 func (plugin *nfsPlugin) Name() string {
@@ -131,11 +132,12 @@ type nfs struct {
 	plugin  *nfsPlugin
 	// decouple creating recyclers by deferring to a function.  Allows for easier testing.
 	newRecyclerFunc func(spec *volume.Spec, host volume.VolumeHost, volumeConfig volume.VolumeConfig) (volume.Recycler, error)
+	volume.MetricsNil
 }
 
 func (nfsVolume *nfs) GetPath() string {
 	name := nfsPluginName
-	return nfsVolume.plugin.host.GetPodVolumeDir(nfsVolume.pod.UID, util.EscapeQualifiedNameForDisk(name), nfsVolume.volName)
+	return nfsVolume.plugin.host.GetPodVolumeDir(nfsVolume.pod.UID, strings.EscapeQualifiedNameForDisk(name), nfsVolume.volName)
 }
 
 type nfsBuilder struct {
@@ -147,12 +149,20 @@ type nfsBuilder struct {
 
 var _ volume.Builder = &nfsBuilder{}
 
-// SetUp attaches the disk and bind mounts to the volume path.
-func (b *nfsBuilder) SetUp() error {
-	return b.SetUpAt(b.GetPath())
+func (b *nfsBuilder) GetAttributes() volume.Attributes {
+	return volume.Attributes{
+		ReadOnly:        b.readOnly,
+		Managed:         false,
+		SupportsSELinux: false,
+	}
 }
 
-func (b *nfsBuilder) SetUpAt(dir string) error {
+// SetUp attaches the disk and bind mounts to the volume path.
+func (b *nfsBuilder) SetUp(fsGroup *int64) error {
+	return b.SetUpAt(b.GetPath(), fsGroup)
+}
+
+func (b *nfsBuilder) SetUpAt(dir string, fsGroup *int64) error {
 	notMnt, err := b.mounter.IsLikelyNotMountPoint(dir)
 	glog.V(4).Infof("NFS mount set up: %s %v %v", dir, !notMnt, err)
 	if err != nil && !os.IsNotExist(err) {
@@ -196,14 +206,10 @@ func (b *nfsBuilder) SetUpAt(dir string) error {
 	return nil
 }
 
-func (b *nfsBuilder) IsReadOnly() bool {
-	return b.readOnly
-}
-
 //
 //func (c *nfsCleaner) GetPath() string {
 //	name := nfsPluginName
-//	return c.plugin.host.GetPodVolumeDir(c.pod.UID, util.EscapeQualifiedNameForDisk(name), c.volName)
+//	return c.plugin.host.GetPodVolumeDir(c.pod.UID, strings.EscapeQualifiedNameForDisk(name), c.volName)
 //}
 
 var _ volume.Cleaner = &nfsCleaner{}
@@ -266,6 +272,7 @@ type nfsRecycler struct {
 	host    volume.VolumeHost
 	config  volume.VolumeConfig
 	timeout int64
+	volume.MetricsNil
 }
 
 func (r *nfsRecycler) GetPath() string {

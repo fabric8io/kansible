@@ -1,5 +1,35 @@
 # Changelog
 
+### 0.22.0 (2016-02-25)
+- Disk usage calculation bug fixes
+- Systemd integration bug fixes
+- Instance ID support for Azure and AWS
+- Limit number of custom metrics
+- Support opt out for disk and network metrics
+
+### 0.21.0 (2016-02-03)
+- Support for filesystem stats with docker v1.10
+- Bug fixes.
+
+### 0.20.5 (2016-01-27)
+- Breaking: Use uint64 for memory stats
+- Bug: Fix devicemapper partition labelling
+- Bug: Fix network stats when using new Docker network functionality
+- Bug: Fix env var label mapping initialization
+- Dependencies: libcontainer update
+
+### 0.20.4 (2016-01-20)
+- Godep updates
+
+### 0.20.3 (2016-01-19)
+- Bug fixes
+- Jitter added to housekeeping to smooth CPU usage.
+
+### 0.20.2 (2016-01-15)
+- New v2.1 API with better filesystem stats
+- Internal refactoring
+- Bug fixes.
+
 ### 0.18.0 (2015-09-23)
 - Large bunch of bug-fixes
 - Fixed networking stats for newer docker versions using libnetwork.

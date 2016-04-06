@@ -26,11 +26,12 @@ import (
 
 	"github.com/golang/glog"
 	"k8s.io/kubernetes/pkg/cloudprovider"
-	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce"
-	"k8s.io/kubernetes/pkg/util"
+	gcecloud "k8s.io/kubernetes/pkg/cloudprovider/providers/gce"
 	"k8s.io/kubernetes/pkg/util/exec"
 	"k8s.io/kubernetes/pkg/util/keymutex"
+	"k8s.io/kubernetes/pkg/util/runtime"
 	"k8s.io/kubernetes/pkg/util/sets"
+	"k8s.io/kubernetes/pkg/volume"
 )
 
 const (
@@ -90,7 +91,7 @@ func (diskUtil *GCEDiskUtil) AttachAndMountDisk(b *gcePersistentDiskBuilder, glo
 		options = append(options, "ro")
 	}
 	if notMnt {
-		err = b.diskMounter.Mount(devicePath, globalPDPath, b.fsType, options)
+		err = b.diskMounter.FormatAndMount(devicePath, globalPDPath, b.fsType, options)
 		if err != nil {
 			os.Remove(globalPDPath)
 			return err
@@ -112,10 +113,61 @@ func (util *GCEDiskUtil) DetachDisk(c *gcePersistentDiskCleaner) error {
 	return nil
 }
 
+func (util *GCEDiskUtil) DeleteVolume(d *gcePersistentDiskDeleter) error {
+	cloud, err := getCloudProvider()
+	if err != nil {
+		return err
+	}
+
+	if err = cloud.DeleteDisk(d.pdName); err != nil {
+		glog.V(2).Infof("Error deleting GCE PD volume %s: %v", d.pdName, err)
+		return err
+	}
+	glog.V(2).Infof("Successfully deleted GCE PD volume %s", d.pdName)
+	return nil
+}
+
+// CreateVolume creates a GCE PD.
+// Returns: volumeID, volumeSizeGB, labels, error
+func (gceutil *GCEDiskUtil) CreateVolume(c *gcePersistentDiskProvisioner) (string, int, map[string]string, error) {
+	cloud, err := getCloudProvider()
+	if err != nil {
+		return "", 0, nil, err
+	}
+
+	name := volume.GenerateVolumeName(c.options.ClusterName, c.options.PVName, 63) // GCE PD name can have up to 63 characters
+	requestBytes := c.options.Capacity.Value()
+	// GCE works with gigabytes, convert to GiB with rounding up
+	requestGB := volume.RoundUpSize(requestBytes, 1024*1024*1024)
+
+	// The disk will be created in the zone in which this code is currently running
+	// TODO: We should support auto-provisioning volumes in multiple/specified zones
+	zone, err := cloud.GetZone()
+	if err != nil {
+		glog.V(2).Infof("error getting zone information from GCE: %v", err)
+		return "", 0, nil, err
+	}
+
+	err = cloud.CreateDisk(name, zone.FailureDomain, int64(requestGB), *c.options.CloudTags)
+	if err != nil {
+		glog.V(2).Infof("Error creating GCE PD volume: %v", err)
+		return "", 0, nil, err
+	}
+	glog.V(2).Infof("Successfully created GCE PD volume %s", name)
+
+	labels, err := cloud.GetAutoLabelsForPD(name)
+	if err != nil {
+		// We don't really want to leak the volume here...
+		glog.Errorf("error getting labels for volume %q: %v", name, err)
+	}
+
+	return name, int(requestGB), labels, nil
+}
+
 // Attaches the specified persistent disk device to node, verifies that it is attached, and retries if it fails.
 func attachDiskAndVerify(b *gcePersistentDiskBuilder, sdBeforeSet sets.String) (string, error) {
 	devicePaths := getDiskByIdPaths(b.gcePersistentDisk)
-	var gceCloud *gce_cloud.GCECloud
+	var gceCloud *gcecloud.GCECloud
 	for numRetries := 0; numRetries < maxRetries; numRetries++ {
 		var err error
 		if gceCloud == nil {
@@ -132,7 +184,7 @@ func attachDiskAndVerify(b *gcePersistentDiskBuilder, sdBeforeSet sets.String) (
 			glog.Warningf("Retrying attach for GCE PD %q (retry count=%v).", b.pdName, numRetries)
 		}
 
-		if err := gceCloud.AttachDisk(b.pdName, b.readOnly); err != nil {
+		if err := gceCloud.AttachDisk(b.pdName, b.plugin.host.GetHostName(), b.readOnly); err != nil {
 			glog.Errorf("Error attaching PD %q: %v", b.pdName, err)
 			time.Sleep(errorSleepDuration)
 			continue
@@ -180,7 +232,7 @@ func verifyDevicePath(devicePaths []string, sdBeforeSet sets.String) (string, er
 // This function is intended to be called asynchronously as a go routine.
 func detachDiskAndVerify(c *gcePersistentDiskCleaner) {
 	glog.V(5).Infof("detachDiskAndVerify(...) for pd %q. Will block for pending operations", c.pdName)
-	defer util.HandleCrash()
+	defer runtime.HandleCrash()
 
 	// Block execution until any pending attach/detach operations for this PD have completed
 	attachDetachMutex.LockKey(c.pdName)
@@ -189,7 +241,7 @@ func detachDiskAndVerify(c *gcePersistentDiskCleaner) {
 	glog.V(5).Infof("detachDiskAndVerify(...) for pd %q. Awake and ready to execute.", c.pdName)
 
 	devicePaths := getDiskByIdPaths(c.gcePersistentDisk)
-	var gceCloud *gce_cloud.GCECloud
+	var gceCloud *gcecloud.GCECloud
 	for numRetries := 0; numRetries < maxRetries; numRetries++ {
 		var err error
 		if gceCloud == nil {
@@ -206,7 +258,7 @@ func detachDiskAndVerify(c *gcePersistentDiskCleaner) {
 			glog.Warningf("Retrying detach for GCE PD %q (retry count=%v).", c.pdName, numRetries)
 		}
 
-		if err := gceCloud.DetachDisk(c.pdName); err != nil {
+		if err := gceCloud.DetachDisk(c.pdName, c.plugin.host.GetHostName()); err != nil {
 			glog.Errorf("Error detaching PD %q: %v", c.pdName, err)
 			time.Sleep(errorSleepDuration)
 			continue
@@ -218,7 +270,7 @@ func detachDiskAndVerify(c *gcePersistentDiskCleaner) {
 				// Log error, if any, and continue checking periodically.
 				glog.Errorf("Error verifying GCE PD (%q) is detached: %v", c.pdName, err)
 			} else if allPathsRemoved {
-				// All paths to the PD have been succefully removed
+				// All paths to the PD have been successfully removed
 				unmountPDAndRemoveGlobalPath(c)
 				glog.Infof("Successfully detached GCE PD %q.", c.pdName)
 				return
@@ -290,14 +342,14 @@ func pathExists(path string) (bool, error) {
 }
 
 // Return cloud provider
-func getCloudProvider() (*gce_cloud.GCECloud, error) {
+func getCloudProvider() (*gcecloud.GCECloud, error) {
 	gceCloudProvider, err := cloudprovider.GetCloudProvider("gce", nil)
 	if err != nil || gceCloudProvider == nil {
 		return nil, err
 	}
 
 	// The conversion must be safe otherwise bug in GetCloudProvider()
-	return gceCloudProvider.(*gce_cloud.GCECloud), nil
+	return gceCloudProvider.(*gcecloud.GCECloud), nil
 }
 
 // Calls "udevadm trigger --action=change" for newly created "/dev/sd*" drives (exist only in after set).

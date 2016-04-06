@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package routecontroller
+package route
 
 import (
 	"net"
@@ -23,7 +23,7 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/cloudprovider"
-	"k8s.io/kubernetes/pkg/cloudprovider/providers/fake"
+	fakecloud "k8s.io/kubernetes/pkg/cloudprovider/providers/fake"
 )
 
 func TestIsResponsibleForRoute(t *testing.T) {
@@ -145,18 +145,29 @@ func TestReconcile(t *testing.T) {
 				{cluster + "-02", "node-2", "10.120.1.0/24"},
 			},
 		},
+		// 2 nodes, one node without CIDR assigned.
+		{
+			nodes: []api.Node{
+				{ObjectMeta: api.ObjectMeta{Name: "node-1", UID: "01"}, Spec: api.NodeSpec{PodCIDR: "10.120.0.0/24"}},
+				{ObjectMeta: api.ObjectMeta{Name: "node-2", UID: "02"}, Spec: api.NodeSpec{PodCIDR: ""}},
+			},
+			initialRoutes: []*cloudprovider.Route{},
+			expectedRoutes: []*cloudprovider.Route{
+				{cluster + "-01", "node-1", "10.120.0.0/24"},
+			},
+		},
 	}
 	for i, testCase := range testCases {
-		cloud := &fake_cloud.FakeCloud{RouteMap: make(map[string]*fake_cloud.FakeRoute)}
+		cloud := &fakecloud.FakeCloud{RouteMap: make(map[string]*fakecloud.FakeRoute)}
 		for _, route := range testCase.initialRoutes {
-			fakeRoute := &fake_cloud.FakeRoute{}
+			fakeRoute := &fakecloud.FakeRoute{}
 			fakeRoute.ClusterName = cluster
 			fakeRoute.Route = *route
 			cloud.RouteMap[route.Name] = fakeRoute
 		}
 		routes, ok := cloud.Routes()
 		if !ok {
-			t.Error("Error in test: fake_cloud doesn't support Routes()")
+			t.Error("Error in test: fakecloud doesn't support Routes()")
 		}
 		_, cidr, _ := net.ParseCIDR("10.120.0.0/16")
 		rc := New(routes, nil, cluster, cidr)

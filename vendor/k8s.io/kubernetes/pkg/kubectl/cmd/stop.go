@@ -17,6 +17,7 @@ limitations under the License.
 package cmd
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/spf13/cobra"
@@ -40,26 +41,27 @@ See 'kubectl delete --help' for more details.
 Attempts to shut down and delete a resource that supports graceful termination.
 If the resource is scalable it will be scaled to 0 before deletion.`
 	stop_example = `# Shut down foo.
-$ kubectl stop replicationcontroller foo
+kubectl stop replicationcontroller foo
 
 # Stop pods and services with label name=myLabel.
-$ kubectl stop pods,services -l name=myLabel
+kubectl stop pods,services -l name=myLabel
 
 # Shut down the service defined in service.json
-$ kubectl stop -f service.json
+kubectl stop -f service.json
 
 # Shut down all resources in the path/to/resources directory
-$ kubectl stop -f path/to/resources`
+kubectl stop -f path/to/resources`
 )
 
 func NewCmdStop(f *cmdutil.Factory, out io.Writer) *cobra.Command {
 	options := &StopOptions{}
 
 	cmd := &cobra.Command{
-		Use:     "stop (-f FILENAME | TYPE (NAME | -l label | --all))",
-		Short:   "Deprecated: Gracefully shut down a resource by name or filename.",
-		Long:    stop_long,
-		Example: stop_example,
+		Use:        "stop (-f FILENAME | TYPE (NAME | -l label | --all))",
+		Short:      "Deprecated: Gracefully shut down a resource by name or filename.",
+		Long:       stop_long,
+		Example:    stop_example,
+		Deprecated: fmt.Sprintf("use %q instead.", "delete"),
 		Run: func(cmd *cobra.Command, args []string) {
 			cmdutil.CheckErr(cmdutil.ValidateOutputArgs(cmd))
 			cmdutil.CheckErr(RunStop(f, cmd, args, out, options))
@@ -83,7 +85,7 @@ func RunStop(f *cmdutil.Factory, cmd *cobra.Command, args []string, out io.Write
 	}
 
 	mapper, typer := f.Object()
-	r := resource.NewBuilder(mapper, typer, f.ClientMapperForCommand()).
+	r := resource.NewBuilder(mapper, typer, resource.ClientMapperFunc(f.ClientForMapping), f.Decoder(true)).
 		ContinueOnError().
 		NamespaceParam(cmdNamespace).DefaultNamespace().
 		ResourceTypeOrNameArgs(false, args...).

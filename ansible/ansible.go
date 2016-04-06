@@ -210,7 +210,7 @@ func ChooseHostAndPrivateKey(thisPodName string, hosts string, c *client.Client,
 			return nil, nil, nil, fmt.Errorf("No ReplicationController found for name %s", rcName)
 		}
 
-		pods, err := c.Pods(ns).List(nil, nil)
+		pods, err := c.Pods(ns).List(api.ListOptions{})
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -469,7 +469,7 @@ func UpdateKansibleRC(hostEntries []*HostEntry, hosts string, f *cmdutil.Factory
 			},
 		}
 	}
-	pods, err := c.Pods(ns).List(nil, nil)
+	pods, err := c.Pods(ns).List(api.ListOptions{})
 	if err != nil {
 		return nil, err
 	}

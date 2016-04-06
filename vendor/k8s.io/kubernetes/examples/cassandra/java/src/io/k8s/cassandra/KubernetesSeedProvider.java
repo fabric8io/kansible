@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2015 Google Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
+ */
+
 package io.k8s.cassandra;
 
 import java.io.IOException;
@@ -32,7 +48,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class KubernetesSeedProvider implements SeedProvider {
-    
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     static class Address {
         public String ip;
@@ -40,14 +56,14 @@ public class KubernetesSeedProvider implements SeedProvider {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     static class Subset {
-        public List<Address> addresses; 
+        public List<Address> addresses;
     }
-    
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     static class Endpoints {
         public List<Subset> subsets;
     }
-    
+
     private static String getEnvOrDefault(String var, String def) {
         String val = System.getenv(var);
         if (val == null) {
@@ -100,7 +116,10 @@ public class KubernetesSeedProvider implements SeedProvider {
 
     public List<InetAddress> getSeeds() {
         List<InetAddress> list = new ArrayList<InetAddress>();
-        String host = "https://kubernetes.default.svc.cluster.local";
+        //String host = "https://kubernetes.default.svc.cluster.local";
+        String proto = "https://";
+        String host = getEnvOrDefault("KUBERNETES_PORT_443_TCP_ADDR", "kubernetes.default.svc.cluster.local");
+        String port = getEnvOrDefault("KUBERNETES_PORT_443_TCP_PORT", "443");
         String serviceName = getEnvOrDefault("CASSANDRA_SERVICE", "cassandra");
         String podNamespace = getEnvOrDefault("POD_NAMESPACE", "default");
         String path = String.format("/api/v1/namespaces/%s/endpoints/", podNamespace);
@@ -110,11 +129,11 @@ public class KubernetesSeedProvider implements SeedProvider {
             SSLContext ctx = SSLContext.getInstance("SSL");
             ctx.init(null, trustAll, new SecureRandom());
 
-            URL url = new URL(host + path + serviceName);
+            URL url = new URL(proto + host + ":" + port + path + serviceName);
             logger.info("Getting endpoints from " + url);
             HttpsURLConnection conn = (HttpsURLConnection)url.openConnection();
 
-            // TODO: Remove this once the CA cert is propogated everywhere, and replace
+            // TODO: Remove this once the CA cert is propagated everywhere, and replace
             // with loading the CA cert.
             conn.setSSLSocketFactory(ctx.getSocketFactory());
             conn.setHostnameVerifier(trustAllHosts);
@@ -126,8 +145,10 @@ public class KubernetesSeedProvider implements SeedProvider {
                 // Here is a problem point, endpoints.subsets can be null in first node cases.
                 if (endpoints.subsets != null && !endpoints.subsets.isEmpty()){
                     for (Subset subset : endpoints.subsets) {
-                        for (Address address : subset.addresses) {
-                            list.add(InetAddress.getByName(address.ip));
+                        if (subset.addresses != null && !subset.addresses.isEmpty()) {
+                            for (Address address : subset.addresses) {
+                                list.add(InetAddress.getByName(address.ip));
+                            }
                         }
                     }
                 }
@@ -136,7 +157,7 @@ public class KubernetesSeedProvider implements SeedProvider {
 		logger.warn("Endpoints are not available");
 	    }
         } catch (IOException | NoSuchAlgorithmException | KeyManagementException ex) {
-	    logger.warn("Request to kubernetes apiserver failed", ex); 
+	    logger.warn("Request to kubernetes apiserver failed", ex);
         }
         if (list.size() == 0) {
 	    // If we got nothing, we might be the first instance, in that case

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	info "github.com/google/cadvisor/info/v1"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -54,8 +55,20 @@ func (p testSubcontainersInfoProvider) SubcontainersInfo(string, *info.Container
 				Aliases: []string{"testcontaineralias"},
 			},
 			Spec: info.ContainerSpec{
-				Image:        "test",
+				Image:  "test",
+				HasCpu: true,
+				Cpu: info.CpuSpec{
+					Limit:  1000,
+					Period: 10,
+					Quota:  10000,
+				},
 				CreationTime: time.Unix(1257894000, 0),
+				Labels: map[string]string{
+					"foo.label": "bar",
+				},
+				Envs: map[string]string{
+					"foo+env": "prod",
+				},
 			},
 			Stats: []*info.ContainerStats{
 				{
@@ -78,6 +91,8 @@ func (p testSubcontainersInfoProvider) SubcontainersInfo(string, *info.Container
 							Pgfault:    12,
 							Pgmajfault: 13,
 						},
+						Cache: 14,
+						RSS:   15,
 					},
 					Network: info.NetworkStats{
 						InterfaceStats: info.InterfaceStats{
@@ -152,8 +167,19 @@ func (p testSubcontainersInfoProvider) SubcontainersInfo(string, *info.Container
 	}, nil
 }
 
+var (
+	includeRe = regexp.MustCompile(`^(?:(?:# HELP |# TYPE )?container_|cadvisor_version_info\{)`)
+	ignoreRe  = regexp.MustCompile(`^container_last_seen\{`)
+)
+
 func TestPrometheusCollector(t *testing.T) {
-	prometheus.MustRegister(NewPrometheusCollector(testSubcontainersInfoProvider{}, nil))
+	c := NewPrometheusCollector(testSubcontainersInfoProvider{}, func(name string) map[string]string {
+		return map[string]string{
+			"zone.name": "hello",
+		}
+	})
+	prometheus.MustRegister(c)
+	defer prometheus.Unregister(c)
 
 	rw := httptest.NewRecorder()
 	prometheus.Handler().ServeHTTP(rw, &http.Request{})
@@ -171,8 +197,6 @@ func TestPrometheusCollector(t *testing.T) {
 	// (https://github.com/prometheus/client_golang/issues/58), we simply compare
 	// verbatim text-format metrics outputs, but ignore certain metric lines
 	// whose value depends on the current time or local circumstances.
-	includeRe := regexp.MustCompile("^(?:(?:# HELP |# TYPE)container_|cadvisor_version_info{)")
-	ignoreRe := regexp.MustCompile("^container_last_seen{")
 	for i, want := range wantLines {
 		if !includeRe.MatchString(want) || ignoreRe.MatchString(want) {
 			continue

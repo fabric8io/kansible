@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
-	"os/exec"
 	"strings"
 
 	"github.com/go-check/check"
@@ -44,11 +43,7 @@ func getExternalAddress(c *check.C) net.IP {
 }
 
 func getContainerLogs(c *check.C, containerID string) string {
-	runCmd := exec.Command(dockerBinary, "logs", containerID)
-	out, _, err := runCommandWithOutput(runCmd)
-	if err != nil {
-		c.Fatal(out, err)
-	}
+	out, _ := dockerCmd(c, "logs", containerID)
 	return strings.Trim(out, "\r\n")
 }
 
@@ -94,6 +89,19 @@ func (s *DockerSuite) TestNetworkLocalhostTCPNat(c *check.C) {
 		c.Fatal(err)
 	}
 	final := strings.TrimRight(string(data), "\n")
+	if final != msg {
+		c.Fatalf("Expected message %q but received %q", msg, final)
+	}
+}
+
+func (s *DockerSuite) TestNetworkLoopbackNat(c *check.C) {
+	testRequires(c, SameHostDaemon, NativeExecDriver)
+	msg := "it works"
+	startServerContainer(c, msg, 8080)
+	endpoint := getExternalAddress(c)
+	out, _ := dockerCmd(c, "run", "-t", "--net=container:server", "busybox",
+		"sh", "-c", fmt.Sprintf("stty raw && nc -w 5 %s 8080", endpoint.String()))
+	final := strings.TrimRight(string(out), "\n")
 	if final != msg {
 		c.Fatalf("Expected message %q but received %q", msg, final)
 	}

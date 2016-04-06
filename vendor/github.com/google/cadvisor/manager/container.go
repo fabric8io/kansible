@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math"
+	"math/rand"
 	"os/exec"
 	"path"
 	"regexp"
@@ -28,8 +29,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/pkg/units"
-	"github.com/golang/glog"
 	"github.com/google/cadvisor/cache/memory"
 	"github.com/google/cadvisor/collector"
 	"github.com/google/cadvisor/container"
@@ -37,15 +36,15 @@ import (
 	"github.com/google/cadvisor/info/v2"
 	"github.com/google/cadvisor/summary"
 	"github.com/google/cadvisor/utils/cpuload"
+
+	units "github.com/docker/go-units"
+	"github.com/golang/glog"
 )
 
 // Housekeeping interval.
 var HousekeepingInterval = flag.Duration("housekeeping_interval", 1*time.Second, "Interval between container housekeepings")
 
-var cgroupPathRegExp = regexp.MustCompile(".*devices.*:(.*?)[,;$].*")
-
-// Decay value used for load average smoothing. Interval length of 10 seconds is used.
-var loadDecay = math.Exp(float64(-1 * (*HousekeepingInterval).Seconds() / 10))
+var cgroupPathRegExp = regexp.MustCompile(`devices[^:]*:(.*?)[,;$]`)
 
 type containerInfo struct {
 	info.ContainerReference
@@ -67,6 +66,9 @@ type containerData struct {
 	lastUpdatedTime          time.Time
 	lastErrorTime            time.Time
 
+	// Decay value used for load average smoothing. Interval length of 10 seconds is used.
+	loadDecay float64
+
 	// Whether to log the usage of this container when it is updated.
 	logUsage bool
 
@@ -75,6 +77,17 @@ type containerData struct {
 
 	// Runs custom metric collectors.
 	collectorManager collector.CollectorManager
+}
+
+// jitter returns a time.Duration between duration and duration + maxFactor * duration,
+// to allow clients to avoid converging on periodic behavior.  If maxFactor is 0.0, a
+// suggested default value will be chosen.
+func jitter(duration time.Duration, maxFactor float64) time.Duration {
+	if maxFactor <= 0.0 {
+		maxFactor = 1.0
+	}
+	wait := duration + time.Duration(rand.Float64()*maxFactor*float64(duration))
+	return wait
 }
 
 func (c *containerData) Start() error {
@@ -316,6 +329,8 @@ func newContainerData(containerName string, memoryCache *memory.InMemoryCache, h
 	}
 	cont.info.ContainerReference = ref
 
+	cont.loadDecay = math.Exp(float64(-cont.housekeepingInterval.Seconds() / 10))
+
 	err = cont.updateSpec()
 	if err != nil {
 		return nil, err
@@ -353,11 +368,14 @@ func (self *containerData) nextHousekeeping(lastHousekeeping time.Time) time.Tim
 		}
 	}
 
-	return lastHousekeeping.Add(self.housekeepingInterval)
+	return lastHousekeeping.Add(jitter(self.housekeepingInterval, 1.0))
 }
 
 // TODO(vmarmol): Implement stats collecting as a custom collector.
 func (c *containerData) housekeeping() {
+	// Start any background goroutines - must be cleaned up in c.handler.Cleanup().
+	c.handler.Start()
+
 	// Long housekeeping is either 100ms or half of the housekeeping interval.
 	longHousekeeping := 100 * time.Millisecond
 	if *HousekeepingInterval/2 < longHousekeeping {
@@ -370,6 +388,8 @@ func (c *containerData) housekeeping() {
 	for {
 		select {
 		case <-c.stop:
+			// Cleanup container resources before stopping housekeeping.
+			c.handler.Cleanup()
 			// Stop housekeeping when signaled.
 			return
 		default:
@@ -443,6 +463,9 @@ func (c *containerData) updateSpec() error {
 	}
 
 	customMetrics, err := c.collectorManager.GetSpec()
+	if err != nil {
+		return err
+	}
 	if len(customMetrics) > 0 {
 		spec.HasCustomMetrics = true
 		spec.CustomMetrics = customMetrics
@@ -460,7 +483,7 @@ func (c *containerData) updateLoad(newLoad uint64) {
 	if c.loadAvg < 0 {
 		c.loadAvg = float64(newLoad) // initialize to the first seen sample for faster stabilization.
 	} else {
-		c.loadAvg = c.loadAvg*loadDecay + float64(newLoad)*(1.0-loadDecay)
+		c.loadAvg = c.loadAvg*c.loadDecay + float64(newLoad)*(1.0-c.loadDecay)
 	}
 }
 

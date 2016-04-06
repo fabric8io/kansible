@@ -22,7 +22,9 @@ import (
 	"time"
 
 	info "github.com/google/cadvisor/info/v1"
+	"github.com/google/cadvisor/info/v2"
 	"github.com/google/cadvisor/integration/framework"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,6 +35,14 @@ import (
 func sanityCheck(alias string, containerInfo info.ContainerInfo, t *testing.T) {
 	assert.Contains(t, containerInfo.Aliases, alias, "Alias %q should be in list of aliases %v", alias, containerInfo.Aliases)
 	assert.NotEmpty(t, containerInfo.Stats, "Expected container to have stats")
+}
+
+// Sanity check the container by:
+// - Checking that the specified alias is a valid one for this container.
+// - Verifying that stats are not empty.
+func sanityCheckV2(alias string, info v2.ContainerInfo, t *testing.T) {
+	assert.Contains(t, info.Spec.Aliases, alias, "Alias %q should be in list of aliases %v", alias, info.Spec.Aliases)
+	assert.NotEmpty(t, info.Stats, "Expected container to have stats")
 }
 
 // Waits up to 5s for a container with the specified alias to appear.
@@ -51,6 +61,12 @@ func waitForContainer(alias string, fm framework.Framework) {
 		return nil
 	}, 5*time.Second)
 	require.NoError(fm.T(), err, "Timed out waiting for container %q to be available in cAdvisor: %v", alias, err)
+}
+
+func getDockerMinorVersion(fm framework.Framework) int {
+	val, err := strconv.Atoi(fm.Docker().Version()[1])
+	assert.Nil(fm.T(), err)
+	return val
 }
 
 // A Docker container in /docker/<ID>
@@ -171,11 +187,15 @@ func TestDockerContainerSpec(t *testing.T) {
 	cpuShares := uint64(2048)
 	cpuMask := "0"
 	memoryLimit := uint64(1 << 30) // 1GB
+	cpusetArg := "--cpuset"
+	if getDockerMinorVersion(fm) >= 10 {
+		cpusetArg = "--cpuset-cpus"
+	}
 	containerId := fm.Docker().Run(framework.DockerRunArgs{
 		Image: "kubernetes/pause",
 		Args: []string{
 			"--cpu-shares", strconv.FormatUint(cpuShares, 10),
-			"--cpuset", cpuMask,
+			cpusetArg, cpuMask,
 			"--memory", strconv.FormatUint(memoryLimit, 10),
 		},
 	})
@@ -249,9 +269,10 @@ func TestDockerContainerNetworkStats(t *testing.T) {
 	defer fm.Cleanup()
 
 	// Wait for the container to show up.
-	containerId := fm.Docker().RunBusybox("watch", "-n1", "wget", "https://www.google.com/")
+	containerId := fm.Docker().RunBusybox("watch", "-n1", "wget", "http://www.google.com/")
 	waitForContainer(containerId, fm)
 
+	time.Sleep(10 * time.Second)
 	request := &info.ContainerInfoRequest{
 		NumStats: 1,
 	}
@@ -268,4 +289,79 @@ func TestDockerContainerNetworkStats(t *testing.T) {
 	assert.NotEqual(0, stat.Network.RxPackets, "Network rx packets should not be zero")
 	assert.NotEqual(stat.Network.RxBytes, stat.Network.TxBytes, "Network tx and rx bytes should not be equal")
 	assert.NotEqual(stat.Network.RxPackets, stat.Network.TxPackets, "Network tx and rx packets should not be equal")
+}
+
+func TestDockerFilesystemStats(t *testing.T) {
+	fm := framework.New(t)
+	defer fm.Cleanup()
+
+	const (
+		ddUsage       = uint64(1 << 3) // 1 KB
+		sleepDuration = 10 * time.Second
+	)
+	// Wait for the container to show up.
+	// FIXME: Tests should be bundled and run on the remote host instead of being run over ssh.
+	// Escaping bash over ssh is ugly.
+	// Once github issue 1130 is fixed, this logic can be removed.
+	dockerCmd := fmt.Sprintf("dd if=/dev/zero of=/file count=2 bs=%d & ping google.com", ddUsage)
+	if fm.Hostname().Host != "localhost" {
+		dockerCmd = fmt.Sprintf("'%s'", dockerCmd)
+	}
+	containerId := fm.Docker().RunBusybox("/bin/sh", "-c", dockerCmd)
+	waitForContainer(containerId, fm)
+	request := &v2.RequestOptions{
+		IdType: v2.TypeDocker,
+		Count:  1,
+	}
+	needsBaseUsageCheck := false
+	storageDriver := fm.Docker().StorageDriver()
+	switch storageDriver {
+	case framework.Aufs, framework.Overlay:
+		needsBaseUsageCheck = true
+	}
+	pass := false
+	// We need to wait for the `dd` operation to complete.
+	for i := 0; i < 10; i++ {
+		containerInfo, err := fm.Cadvisor().ClientV2().Stats(containerId, request)
+		if err != nil {
+			t.Logf("%v stats unavailable - %v", time.Now().String(), err)
+			t.Logf("retrying after %s...", sleepDuration.String())
+			time.Sleep(sleepDuration)
+
+			continue
+		}
+		require.Equal(t, len(containerInfo), 1)
+		var info v2.ContainerInfo
+		// There is only one container in containerInfo. Since it is a map with unknown key,
+		// use the value blindly.
+		for _, cInfo := range containerInfo {
+			info = cInfo
+		}
+		sanityCheckV2(containerId, info, t)
+
+		require.NotNil(t, info.Stats[0], "got info: %+v", info)
+		require.NotNil(t, info.Stats[0].Filesystem, "got info: %+v", info)
+		require.NotNil(t, info.Stats[0].Filesystem.TotalUsageBytes, "got info: %+v", info.Stats[0].Filesystem)
+		if *info.Stats[0].Filesystem.TotalUsageBytes >= ddUsage {
+			if !needsBaseUsageCheck {
+				pass = true
+				break
+			}
+			require.NotNil(t, info.Stats[0].Filesystem.BaseUsageBytes)
+			if *info.Stats[0].Filesystem.BaseUsageBytes >= ddUsage {
+				pass = true
+				break
+			}
+		}
+		t.Logf("expected total usage %d bytes to be greater than %d bytes", *info.Stats[0].Filesystem.TotalUsageBytes, ddUsage)
+		if needsBaseUsageCheck {
+			t.Logf("expected base %d bytes to be greater than %d bytes", *info.Stats[0].Filesystem.BaseUsageBytes, ddUsage)
+		}
+		t.Logf("retrying after %s...", sleepDuration.String())
+		time.Sleep(sleepDuration)
+	}
+
+	if !pass {
+		t.Fail()
+	}
 }

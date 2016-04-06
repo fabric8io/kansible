@@ -25,26 +25,30 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/testapi"
+	apitesting "k8s.io/kubernetes/pkg/api/testing"
 	"k8s.io/kubernetes/pkg/client/cache"
+	"k8s.io/kubernetes/pkg/client/restclient"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util"
+	utiltesting "k8s.io/kubernetes/pkg/util/testing"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm"
 	schedulerapi "k8s.io/kubernetes/plugin/pkg/scheduler/api"
 	latestschedulerapi "k8s.io/kubernetes/plugin/pkg/scheduler/api/latest"
+	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
 )
 
 func TestCreate(t *testing.T) {
-	handler := util.FakeHandler{
+	handler := utiltesting.FakeHandler{
 		StatusCode:   500,
 		ResponseBody: "",
 		T:            t,
 	}
 	server := httptest.NewServer(&handler)
-	defer server.Close()
-	client := client.NewOrDie(&client.Config{Host: server.URL, Version: testapi.Default.Version()})
-	factory := NewConfigFactory(client, nil)
+	// TODO: Uncomment when fix #19254
+	// defer server.Close()
+	client := client.NewOrDie(&restclient.Config{Host: server.URL, ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	factory := NewConfigFactory(client, api.DefaultSchedulerName)
 	factory.Create()
 }
 
@@ -54,15 +58,16 @@ func TestCreateFromConfig(t *testing.T) {
 	var configData []byte
 	var policy schedulerapi.Policy
 
-	handler := util.FakeHandler{
+	handler := utiltesting.FakeHandler{
 		StatusCode:   500,
 		ResponseBody: "",
 		T:            t,
 	}
 	server := httptest.NewServer(&handler)
-	defer server.Close()
-	client := client.NewOrDie(&client.Config{Host: server.URL, Version: testapi.Default.Version()})
-	factory := NewConfigFactory(client, nil)
+	// TODO: Uncomment when fix #19254
+	// defer server.Close()
+	client := client.NewOrDie(&restclient.Config{Host: server.URL, ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	factory := NewConfigFactory(client, api.DefaultSchedulerName)
 
 	// Pre-register some predicate and priority functions
 	RegisterFitPredicate("PredicateOne", PredicateOne)
@@ -84,8 +89,7 @@ func TestCreateFromConfig(t *testing.T) {
 			{"name" : "PriorityOne", "weight" : 2},
 			{"name" : "PriorityTwo", "weight" : 1}		]
 	}`)
-	err := latestschedulerapi.Codec.DecodeInto(configData, &policy)
-	if err != nil {
+	if err := runtime.DecodeInto(latestschedulerapi.Codec, configData, &policy); err != nil {
 		t.Errorf("Invalid configuration: %v", err)
 	}
 
@@ -96,52 +100,47 @@ func TestCreateFromEmptyConfig(t *testing.T) {
 	var configData []byte
 	var policy schedulerapi.Policy
 
-	handler := util.FakeHandler{
+	handler := utiltesting.FakeHandler{
 		StatusCode:   500,
 		ResponseBody: "",
 		T:            t,
 	}
 	server := httptest.NewServer(&handler)
-	defer server.Close()
-	client := client.NewOrDie(&client.Config{Host: server.URL, Version: testapi.Default.Version()})
-	factory := NewConfigFactory(client, nil)
+	// TODO: Uncomment when fix #19254
+	// defer server.Close()
+	client := client.NewOrDie(&restclient.Config{Host: server.URL, ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	factory := NewConfigFactory(client, api.DefaultSchedulerName)
 
 	configData = []byte(`{}`)
-	err := latestschedulerapi.Codec.DecodeInto(configData, &policy)
-	if err != nil {
+	if err := runtime.DecodeInto(latestschedulerapi.Codec, configData, &policy); err != nil {
 		t.Errorf("Invalid configuration: %v", err)
 	}
 
 	factory.CreateFromConfig(policy)
 }
 
-func PredicateOne(pod *api.Pod, existingPods []*api.Pod, node string) (bool, error) {
+func PredicateOne(pod *api.Pod, nodeName string, nodeInfo *schedulercache.NodeInfo) (bool, error) {
 	return true, nil
 }
 
-func PredicateTwo(pod *api.Pod, existingPods []*api.Pod, node string) (bool, error) {
+func PredicateTwo(pod *api.Pod, nodeName string, nodeInfo *schedulercache.NodeInfo) (bool, error) {
 	return true, nil
 }
 
-func PriorityOne(pod *api.Pod, podLister algorithm.PodLister, nodeLister algorithm.NodeLister) (algorithm.HostPriorityList, error) {
-	return []algorithm.HostPriority{}, nil
+func PriorityOne(pod *api.Pod, nodeNameToInfo map[string]*schedulercache.NodeInfo, nodeLister algorithm.NodeLister) (schedulerapi.HostPriorityList, error) {
+	return []schedulerapi.HostPriority{}, nil
 }
 
-func PriorityTwo(pod *api.Pod, podLister algorithm.PodLister, nodeLister algorithm.NodeLister) (algorithm.HostPriorityList, error) {
-	return []algorithm.HostPriority{}, nil
+func PriorityTwo(pod *api.Pod, nodeNameToInfo map[string]*schedulercache.NodeInfo, nodeLister algorithm.NodeLister) (schedulerapi.HostPriorityList, error) {
+	return []schedulerapi.HostPriority{}, nil
 }
 
 func TestDefaultErrorFunc(t *testing.T) {
-	grace := int64(30)
 	testPod := &api.Pod{
 		ObjectMeta: api.ObjectMeta{Name: "foo", Namespace: "bar"},
-		Spec: api.PodSpec{
-			RestartPolicy:                 api.RestartPolicyAlways,
-			DNSPolicy:                     api.DNSClusterFirst,
-			TerminationGracePeriodSeconds: &grace,
-		},
+		Spec:       apitesting.DeepEqualSafePodSpec(),
 	}
-	handler := util.FakeHandler{
+	handler := utiltesting.FakeHandler{
 		StatusCode:   200,
 		ResponseBody: runtime.EncodeOrDie(testapi.Default.Codec(), testPod),
 		T:            t,
@@ -151,8 +150,9 @@ func TestDefaultErrorFunc(t *testing.T) {
 	// FakeHandler musn't be sent requests other than the one you want to test.
 	mux.Handle(testapi.Default.ResourcePath("pods", "bar", "foo"), &handler)
 	server := httptest.NewServer(mux)
-	defer server.Close()
-	factory := NewConfigFactory(client.NewOrDie(&client.Config{Host: server.URL, Version: testapi.Default.Version()}), nil)
+	// TODO: Uncomment when fix #19254
+	// defer server.Close()
+	factory := NewConfigFactory(client.NewOrDie(&restclient.Config{Host: server.URL, ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}}), api.DefaultSchedulerName)
 	queue := cache.NewFIFO(cache.MetaNamespaceKeyFunc)
 	podBackoff := podBackoff{
 		perPodBackoff:   map[types.NamespacedName]*backoffEntry{},
@@ -228,14 +228,15 @@ func TestBind(t *testing.T) {
 	}
 
 	for _, item := range table {
-		handler := util.FakeHandler{
+		handler := utiltesting.FakeHandler{
 			StatusCode:   200,
 			ResponseBody: "",
 			T:            t,
 		}
 		server := httptest.NewServer(&handler)
-		defer server.Close()
-		client := client.NewOrDie(&client.Config{Host: server.URL, Version: testapi.Default.Version()})
+		// TODO: Uncomment when fix #19254
+		// defer server.Close()
+		client := client.NewOrDie(&restclient.Config{Host: server.URL, ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
 		b := binder{client}
 
 		if err := b.Bind(item.binding); err != nil {
@@ -304,5 +305,74 @@ func TestBackoff(t *testing.T) {
 	duration = backoff.getEntry(fooID).getBackoff(backoff.maxDuration)
 	if duration != 1*time.Second {
 		t.Errorf("expected: 1, got %s", duration.String())
+	}
+}
+
+// TestResponsibleForPod tests if a pod with an annotation that should cause it to
+// be picked up by the default scheduler, is in fact picked by the default scheduler
+// Two schedulers are made in the test: one is default scheduler and other scheduler
+// is of name "foo-scheduler". A pod must be picked up by at most one of the two
+// schedulers.
+func TestResponsibleForPod(t *testing.T) {
+	handler := utiltesting.FakeHandler{
+		StatusCode:   500,
+		ResponseBody: "",
+		T:            t,
+	}
+	server := httptest.NewServer(&handler)
+	// TODO: Uncomment when fix #19254
+	// defer server.Close()
+	client := client.NewOrDie(&restclient.Config{Host: server.URL, ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	// factory of "default-scheduler"
+	factoryDefaultScheduler := NewConfigFactory(client, api.DefaultSchedulerName)
+	// factory of "foo-scheduler"
+	factoryFooScheduler := NewConfigFactory(client, "foo-scheduler")
+	// scheduler annotaions to be tested
+	schedulerAnnotationFitsDefault := map[string]string{"scheduler.alpha.kubernetes.io/name": "default-scheduler"}
+	schedulerAnnotationFitsFoo := map[string]string{"scheduler.alpha.kubernetes.io/name": "foo-scheduler"}
+	schedulerAnnotationFitsNone := map[string]string{"scheduler.alpha.kubernetes.io/name": "bar-scheduler"}
+	tests := []struct {
+		pod             *api.Pod
+		pickedByDefault bool
+		pickedByFoo     bool
+	}{
+		{
+			// pod with no annotation "scheduler.alpha.kubernetes.io/name=<scheduler-name>" should be
+			// picked by the default scheduler, NOT by the one of name "foo-scheduler"
+			pod:             &api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo", Namespace: "bar"}},
+			pickedByDefault: true,
+			pickedByFoo:     false,
+		},
+		{
+			// pod with annotation "scheduler.alpha.kubernetes.io/name=default-scheduler" should be picked
+			// by the scheduler of name "default-scheduler", NOT by the one of name "foo-scheduler"
+			pod:             &api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo", Namespace: "bar", Annotations: schedulerAnnotationFitsDefault}},
+			pickedByDefault: true,
+			pickedByFoo:     false,
+		},
+		{
+			// pod with annotataion "scheduler.alpha.kubernetes.io/name=foo-scheduler" should be NOT
+			// be picked by the scheduler of name "default-scheduler", but by the one of name "foo-scheduler"
+			pod:             &api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo", Namespace: "bar", Annotations: schedulerAnnotationFitsFoo}},
+			pickedByDefault: false,
+			pickedByFoo:     true,
+		},
+		{
+			// pod with annotataion "scheduler.alpha.kubernetes.io/name=foo-scheduler" should be NOT
+			// be picked by niether the scheduler of name "default-scheduler" nor the one of name "foo-scheduler"
+			pod:             &api.Pod{ObjectMeta: api.ObjectMeta{Name: "foo", Namespace: "bar", Annotations: schedulerAnnotationFitsNone}},
+			pickedByDefault: false,
+			pickedByFoo:     false,
+		},
+	}
+
+	for _, test := range tests {
+		podOfDefault := factoryDefaultScheduler.responsibleForPod(test.pod)
+		podOfFoo := factoryFooScheduler.responsibleForPod(test.pod)
+		results := []bool{podOfDefault, podOfFoo}
+		expected := []bool{test.pickedByDefault, test.pickedByFoo}
+		if !reflect.DeepEqual(results, expected) {
+			t.Errorf("expected: {%v, %v}, got {%v, %v}", test.pickedByDefault, test.pickedByFoo, podOfDefault, podOfFoo)
+		}
 	}
 }

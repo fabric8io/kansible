@@ -20,36 +20,30 @@ import (
 	"fmt"
 	"time"
 
+	"k8s.io/kubernetes/pkg/api"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/labels"
 
 	. "github.com/onsi/ginkgo"
 )
 
 const (
-	timeout       = 1 * time.Minute
 	maxRetries    = 6
 	sleepDuration = 10 * time.Second
 )
 
 var _ = Describe("Cadvisor", func() {
-	var c *client.Client
 
-	BeforeEach(func() {
-		var err error
-		c, err = loadClient()
-		expectNoError(err)
-	})
+	f := NewDefaultFramework("cadvisor")
 
 	It("should be healthy on every node.", func() {
-		CheckCadvisorHealthOnAllNodes(c, 5*time.Minute)
+		CheckCadvisorHealthOnAllNodes(f.Client, 5*time.Minute)
 	})
 })
 
 func CheckCadvisorHealthOnAllNodes(c *client.Client, timeout time.Duration) {
+	// It should be OK to list unschedulable Nodes here.
 	By("getting list of nodes")
-	nodeList, err := c.Nodes().List(labels.Everything(), fields.Everything())
+	nodeList, err := c.Nodes().List(api.ListOptions{})
 	expectNoError(err)
 	var errors []error
 	retries := maxRetries

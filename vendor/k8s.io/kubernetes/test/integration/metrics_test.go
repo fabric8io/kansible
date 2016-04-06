@@ -27,9 +27,8 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/testapi"
+	"k8s.io/kubernetes/pkg/client/restclient"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/test/integration/framework"
 
 	"github.com/golang/glog"
@@ -88,7 +87,8 @@ func checkForExpectedMetrics(t *testing.T, metrics []*prometheuspb.MetricFamily,
 
 func TestMasterProcessMetrics(t *testing.T) {
 	_, s := framework.RunAMaster(t)
-	defer s.Close()
+	// TODO: Uncomment when fix #19254
+	// defer s.Close()
 
 	metrics, err := scrapeMetrics(s)
 	if err != nil {
@@ -105,12 +105,13 @@ func TestMasterProcessMetrics(t *testing.T) {
 
 func TestApiserverMetrics(t *testing.T) {
 	_, s := framework.RunAMaster(t)
-	defer s.Close()
+	// TODO: Uncomment when fix #19254
+	// defer s.Close()
 
 	// Make a request to the apiserver to ensure there's at least one data point
 	// for the metrics we're expecting -- otherwise, they won't be exported.
-	client := client.NewOrDie(&client.Config{Host: s.URL, Version: testapi.Default.Version()})
-	if _, err := client.Pods(api.NamespaceDefault).List(labels.Everything(), fields.Everything()); err != nil {
+	client := client.NewOrDie(&restclient.Config{Host: s.URL, ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	if _, err := client.Pods(api.NamespaceDefault).List(api.ListOptions{}); err != nil {
 		t.Fatalf("unexpected error getting pods: %v", err)
 	}
 

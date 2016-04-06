@@ -69,6 +69,9 @@ func (s *BzrRepo) Get() error {
 	basePath := filepath.Dir(filepath.FromSlash(s.LocalPath()))
 	if _, err := os.Stat(basePath); os.IsNotExist(err) {
 		err = os.MkdirAll(basePath, 0755)
+		if err != nil {
+			return err
+		}
 	}
 
 	_, err := s.run("bzr", "branch", s.Remote(), s.LocalPath())
@@ -159,4 +162,47 @@ func (s *BzrRepo) IsReference(r string) bool {
 func (s *BzrRepo) IsDirty() bool {
 	out, err := s.runFromDir("bzr", "diff")
 	return err != nil || len(out) != 0
+}
+
+// CommitInfo retrieves metadata about a commit.
+func (s *BzrRepo) CommitInfo(id string) (*CommitInfo, error) {
+	r := "-r" + id
+	out, err := s.runFromDir("bzr", "log", r, "--log-format=long")
+	if err != nil {
+		return nil, ErrRevisionUnavailable
+	}
+
+	ci := &CommitInfo{
+		Commit: id,
+	}
+	lines := strings.Split(string(out), "\n")
+	const format = "Mon 2006-01-02 15:04:05 -0700"
+	var track int
+	var trackOn bool
+
+	// Note, bzr does not appear to use i18m.
+	for i, l := range lines {
+		if strings.HasPrefix(l, "committer:") {
+			ci.Author = strings.TrimSpace(strings.TrimPrefix(l, "committer:"))
+		} else if strings.HasPrefix(l, "timestamp:") {
+			ts := strings.TrimSpace(strings.TrimPrefix(l, "timestamp:"))
+			ci.Date, err = time.Parse(format, ts)
+			if err != nil {
+				return nil, err
+			}
+		} else if strings.TrimSpace(l) == "message:" {
+			track = i
+			trackOn = true
+		} else if trackOn && i > track {
+			ci.Message = ci.Message + l
+		}
+	}
+	ci.Message = strings.TrimSpace(ci.Message)
+
+	// Didn't find the revision
+	if ci.Author == "" {
+		return nil, ErrRevisionUnavailable
+	}
+
+	return ci, nil
 }

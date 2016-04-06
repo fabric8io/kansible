@@ -41,7 +41,7 @@ grains:
   roles:
     - kubernetes-pool
     - kubernetes-pool-vsphere
-  cbr-cidr: $MINION_IP_RANGE
+  cloud: vsphere
 EOF
 
 # Install Salt

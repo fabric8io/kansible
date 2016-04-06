@@ -19,6 +19,8 @@ Guide](../admin/README.md).
 
 * **Pull Request Process** ([pull-requests.md](pull-requests.md)): When and why pull requests are closed.
 
+* **Kubernetes On-Call Rotations** ([on-call-rotations.md](on-call-rotations.md)): Descriptions of on-call rotations for build and end-user support
+
 * **Faster PR reviews** ([faster_reviews.md](faster_reviews.md)): How to get faster PR reviews.
 
 * **Getting Recent Builds** ([getting-builds.md](getting-builds.md)): How to get recent builds including the latest builds that pass CI.
@@ -33,7 +35,7 @@ Guide](../admin/README.md).
 * **Hunting flaky tests** ([flaky-tests.md](flaky-tests.md)): We have a goal of 99.9% flake free tests.
   Here's how to run your tests many times.
 
-* **Logging Conventions** ([logging.md](logging.md)]: Glog levels.
+* **Logging Conventions** ([logging.md](logging.md)): Glog levels.
 
 * **Profiling Kubernetes** ([profiling.md](profiling.md)): How to plug in go pprof profiler to Kubernetes.
 
@@ -44,6 +46,11 @@ Guide](../admin/README.md).
 * **Coding Conventions** ([coding-conventions.md](coding-conventions.md)):
   Coding style advice for contributors.
 
+* **Document Conventions** ([how-to-doc.md](how-to-doc.md))
+  Document style advice for contributors.
+
+* **Running a cluster locally** ([running-locally.md](running-locally.md)):
+  A fast and lightweight local cluster deployment for development.
 
 ## Developing against the Kubernetes API
 

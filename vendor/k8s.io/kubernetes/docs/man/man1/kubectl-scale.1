@@ -3,7 +3,7 @@
 
 .SH NAME
 .PP
-kubectl scale \- Set a new size for a Replication Controller.
+kubectl scale \- Set a new size for a Deployment, ReplicaSet, Replication Controller, or Job.
 
 
 .SH SYNOPSIS
@@ -13,7 +13,7 @@ kubectl scale \- Set a new size for a Replication Controller.
 
 .SH DESCRIPTION
 .PP
-Set a new size for a Replication Controller.
+Set a new size for a Deployment, ReplicaSet, Replication Controller, or Job.
 
 .PP
 Scale also allows users to specify one or more preconditions for the scale action.
@@ -25,15 +25,19 @@ scale is sent to the server.
 .SH OPTIONS
 .PP
 \fB\-\-current\-replicas\fP=\-1
-    Precondition for current size. Requires that the current size of the replication controller match this value in order to scale.
+    Precondition for current size. Requires that the current size of the resource match this value in order to scale.
 
 .PP
 \fB\-f\fP, \fB\-\-filename\fP=[]
-    Filename, directory, or URL to a file identifying the replication controller to set a new size
+    Filename, directory, or URL to a file identifying the resource to set a new size
 
 .PP
 \fB\-o\fP, \fB\-\-output\fP=""
     Output mode. Use "\-o name" for shorter output (resource/name).
+
+.PP
+\fB\-\-record\fP=false
+    Record current kubectl command in the resource annotation.
 
 .PP
 \fB\-\-replicas\fP=\-1
@@ -55,7 +59,7 @@ scale is sent to the server.
 
 .PP
 \fB\-\-api\-version\fP=""
-    The API version to use when talking to the server
+    DEPRECATED: The API version to use when talking to the server
 
 .PP
 \fB\-\-certificate\-authority\fP=""
@@ -63,7 +67,7 @@ scale is sent to the server.
 
 .PP
 \fB\-\-client\-certificate\fP=""
-    Path to a client key file for TLS.
+    Path to a client certificate file for TLS.
 
 .PP
 \fB\-\-client\-key\fP=""
@@ -147,17 +151,20 @@ scale is sent to the server.
 .RS
 
 .nf
-# Scale replication controller named 'foo' to 3.
-$ kubectl scale \-\-replicas=3 replicationcontrollers foo
+# Scale a replicaset named 'foo' to 3.
+kubectl scale \-\-replicas=3 rs/foo
 
-# Scale a replication controller identified by type and name specified in "foo\-controller.yaml" to 3.
-$ kubectl scale \-\-replicas=3 \-f foo\-controller.yaml
+# Scale a resource identified by type and name specified in "foo.yaml" to 3.
+kubectl scale \-\-replicas=3 \-f foo.yaml
 
-# If the replication controller named foo's current size is 2, scale foo to 3.
-$ kubectl scale \-\-current\-replicas=2 \-\-replicas=3 replicationcontrollers foo
+# If the deployment named mysql's current size is 2, scale mysql to 3.
+kubectl scale \-\-current\-replicas=2 \-\-replicas=3 deployment/mysql
 
 # Scale multiple replication controllers.
-$ kubectl scale \-\-replicas=5 rc/foo rc/bar
+kubectl scale \-\-replicas=5 rc/foo rc/bar rc/baz
+
+# Scale job named 'cron' to 3.
+kubectl scale \-\-replicas=3 job/cron
 
 .fi
 .RE

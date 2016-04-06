@@ -22,6 +22,7 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/testapi"
+	apitesting "k8s.io/kubernetes/pkg/api/testing"
 	"k8s.io/kubernetes/pkg/fields"
 	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/util"
@@ -42,18 +43,22 @@ func testEvent(name string) *api.Event {
 
 func TestGetAttrs(t *testing.T) {
 	eventA := &api.Event{
-		ObjectMeta: api.ObjectMeta{Name: "f0118"},
+		ObjectMeta: api.ObjectMeta{
+			Name:      "f0118",
+			Namespace: "default",
+		},
 		InvolvedObject: api.ObjectReference{
 			Kind:            "Pod",
 			Name:            "foo",
 			Namespace:       "baz",
 			UID:             "long uid string",
-			APIVersion:      testapi.Default.Version(),
+			APIVersion:      testapi.Default.GroupVersion().String(),
 			ResourceVersion: "0",
 			FieldPath:       "",
 		},
 		Reason: "ForTesting",
 		Source: api.EventSource{Component: "test"},
+		Type:   api.EventTypeNormal,
 	}
 	label, field, err := getAttrs(eventA)
 	if err != nil {
@@ -64,17 +69,32 @@ func TestGetAttrs(t *testing.T) {
 	}
 	expect := fields.Set{
 		"metadata.name":                  "f0118",
+		"metadata.namespace":             "default",
 		"involvedObject.kind":            "Pod",
 		"involvedObject.name":            "foo",
 		"involvedObject.namespace":       "baz",
 		"involvedObject.uid":             "long uid string",
-		"involvedObject.apiVersion":      testapi.Default.Version(),
+		"involvedObject.apiVersion":      testapi.Default.GroupVersion().String(),
 		"involvedObject.resourceVersion": "0",
 		"involvedObject.fieldPath":       "",
 		"reason":                         "ForTesting",
 		"source":                         "test",
+		"type":                           api.EventTypeNormal,
 	}
 	if e, a := expect, field; !reflect.DeepEqual(e, a) {
 		t.Errorf("diff: %s", util.ObjectDiff(e, a))
 	}
+}
+
+func TestSelectableFieldLabelConversions(t *testing.T) {
+	_, fset, err := getAttrs(&api.Event{})
+	if err != nil {
+		t.Fatalf("Unexpected error %v", err)
+	}
+	apitesting.TestSelectableFieldLabelConversionsOfKind(t,
+		testapi.Default.GroupVersion().String(),
+		"Event",
+		labels.Set(fset),
+		nil,
+	)
 }

@@ -5,7 +5,7 @@
 API Conventions
 ===============
 
-Updated: 9/20/2015
+Updated: 10/8/2015
 
 *This document is oriented at users who want a deeper understanding of the Kubernetes
 API structure, and developers wanting to extend the Kubernetes API.  An introduction to
@@ -22,7 +22,9 @@ using resources with kubectl can be found in [Working with resources](../user-gu
         - [Typical status properties](#typical-status-properties)
       - [References to related objects](#references-to-related-objects)
       - [Lists of named subobjects preferred over maps](#lists-of-named-subobjects-preferred-over-maps)
+      - [Primitive types](#primitive-types)
       - [Constants](#constants)
+      - [Unions](#unions)
     - [Lists and Simple kinds](#lists-and-simple-kinds)
   - [Differing Representations](#differing-representations)
   - [Verbs on Resources](#verbs-on-resources)
@@ -31,6 +33,7 @@ using resources with kubectl can be found in [Working with resources](../user-gu
     - [List Operations](#list-operations)
     - [Map Operations](#map-operations)
   - [Idempotency](#idempotency)
+  - [Optional vs Required](#optional-vs-required)
   - [Defaulting](#defaulting)
   - [Late Initialization](#late-initialization)
   - [Concurrency Control and Consistency](#concurrency-control-and-consistency)
@@ -45,6 +48,8 @@ using resources with kubectl can be found in [Working with resources](../user-gu
   - [Events](#events)
   - [Naming conventions](#naming-conventions)
   - [Label, selector, and annotation conventions](#label-selector-and-annotation-conventions)
+  - [WebSockets and SPDY](#websockets-and-spdy)
+  - [Validation](#validation)
 
 <!-- END MUNGE: GENERATED_TOC -->
 
@@ -121,7 +126,7 @@ These fields are required for proper decoding of the object. They may be populat
 
 Every object kind MUST have the following metadata in a nested object field called "metadata":
 
-* namespace: a namespace is a DNS compatible subdomain that objects are subdivided into. The default namespace is 'default'.  See [docs/user-guide/namespaces.md](../user-guide/namespaces.md) for more.
+* namespace: a namespace is a DNS compatible label that objects are subdivided into. The default namespace is 'default'.  See [docs/user-guide/namespaces.md](../user-guide/namespaces.md) for more.
 * name: a string that uniquely identifies this object within the current namespace (see [docs/user-guide/identifiers.md](../user-guide/identifiers.md)). This value is used in the path when retrieving an individual object.
 * uid: a unique in time and space value (typically an RFC 4122 generated identifier, see [docs/user-guide/identifiers.md](../user-guide/identifiers.md)) used to distinguish between objects with the same name that have been deleted and recreated
 
@@ -144,7 +149,7 @@ When a new version of an object is POSTed or PUT, the "spec" is updated and avai
 
 The Kubernetes API also serves as the foundation for the declarative configuration schema for the system. In order to facilitate level-based operation and expression of declarative configuration, fields in the specification should have declarative rather than imperative names and semantics -- they represent the desired state, not actions intended to yield the desired state.
 
-The PUT and POST verbs on objects will ignore the "status" values. A `/status` subresource is provided to enable system components to update statuses of resources they manage.
+The PUT and POST verbs on objects MUST ignore the "status" values, to avoid accidentally overwriting the status in read-modify-write scenarios. A `/status` subresource MUST be provided to enable system components to update statuses of resources they manage.
 
 Otherwise, PUT expects the whole object to be specified. Therefore, if a field is omitted it is assumed that the client wants to clear that field's value. The PUT verb does not accept partial updates. Modification of just part of an object may be achieved by GETting the resource, modifying part of the spec, labels, or annotations, and then PUTting it back. See [concurrency control](#concurrency-control-and-consistency), below, regarding read-modify-write consistency when using this pattern. Some objects may expose alternative resource representations that allow mutation of the status, or performing custom actions on the object.
 
@@ -158,7 +163,7 @@ Objects that contain both spec and status should not contain additional top-leve
 
 The `FooCondition` type for some resource type `Foo` may include a subset of the following fields, but must contain at least `type` and `status` fields:
 
-```golang
+```go
 	Type               FooConditionType  `json:"type" description:"type of Foo condition"`
 	Status             ConditionStatus   `json:"status" description:"status of the condition, one of True, False, Unknown"`
 	LastHeartbeatTime  unversioned.Time         `json:"lastHeartbeatTime,omitempty" description:"last time we got an update on a given condition"`
@@ -217,9 +222,27 @@ ports:
 
 This rule maintains the invariant that all JSON/YAML keys are fields in API objects. The only exceptions are pure maps in the API (currently, labels, selectors, annotations, data), as opposed to sets of subobjects.
 
+#### Primitive types
+
+* Avoid floating-point values as much as possible, and never use them in spec. Floating-point values cannot be reliably round-tripped (encoded and re-decoded) without changing, and have varying precision and representations across languages and architectures.
+* All numbers (e.g., uint32, int64) are converted to float64 by Javascript and some other languages, so any field which is expected to exceed that either in magnitude or in precision (specifically integer values > 53 bits) should be serialized and accepted as strings.
+* Do not use unsigned integers, due to inconsistent support across languages and libraries. Just validate that the integer is non-negative if that's the case.
+* Do not use enums. Use aliases for string instead (e.g., `NodeConditionType`).
+* Look at similar fields in the API (e.g., ports, durations) and follow the conventions of existing fields.
+* All public integer fields MUST use the Go `(u)int32` or Go `(u)int64` types, not `(u)int` (which is ambiguous depending on target platform). Internal types may use `(u)int`.
+
 #### Constants
 
 Some fields will have a list of allowed values (enumerations). These values will be strings, and they will be in CamelCase, with an initial uppercase letter. Examples: "ClusterFirst", "Pending", "ClientIP".
+
+#### Unions
+
+Sometimes, at most one of a set of fields can be set.  For example, the [volumes] field of a PodSpec has 17 different volume type-specific
+fields, such as `nfs` and `iscsi`.  All fields in the set should be [Optional](#optional-vs-required).
+
+Sometimes, when a new type is created, the api designer may anticipate that a union will be needed in the future, even if only one field is
+allowed initially.  In this case, be sure to make the field [Optional](#optional-vs-required) optional.  In the validation, you may
+still return an error if the sole field is unset.  Do not set a default value for that field.
 
 ### Lists and Simple kinds
 
@@ -340,6 +363,40 @@ labels:
 All compatible Kubernetes APIs MUST support "name idempotency" and respond with an HTTP status code 409 when a request is made to POST an object that has the same name as an existing object in the system. See [docs/user-guide/identifiers.md](../user-guide/identifiers.md) for details.
 
 Names generated by the system may be requested using `metadata.generateName`. GenerateName indicates that the name should be made unique by the server prior to persisting it. A non-empty value for the field indicates the name will be made unique (and the name returned to the client will be different than the name passed). The value of this field will be combined with a unique suffix on the server if the Name field has not been provided. The provided value must be valid within the rules for Name, and may be truncated by the length of the suffix required to make the value unique on the server. If this field is specified, and Name is not present, the server will NOT return a 409 if the generated name exists - instead, it will either return 201 Created or 504 with Reason `ServerTimeout` indicating a unique name could not be found in the time allotted, and the client should retry (optionally after the time indicated in the Retry-After header).
+
+## Optional vs Required
+
+Fields must be either optional or required.
+
+Optional fields have the following properties:
+
+- They have `omitempty` struct tag in Go.
+- They are a pointer type in the Go definition (e.g. `bool *awesomeFlag`) or have a built-in `nil`
+  value (e.g. maps and slices).
+- The API server should allow POSTing and PUTing a resource with this field unset.
+
+Required fields have the opposite properties, namely:
+
+- They do not have an `omitempty` struct tag.
+- They are not a pointer type in the Go definition (e.g. `bool otherFlag`).
+- The API server should not allow POSTing or PUTing a resource with this field unset.
+
+Using the `omitempty` tag causes swagger documentation to reflect that the field is optional.
+
+Using a pointer allows distinguishing unset from the zero value for that type.
+There are some cases where, in principle, a pointer is not needed for an optional field
+since the zero value is forbidden, and thus implies unset.   There are examples of this in the
+codebase.  However:
+
+- it can be difficult for implementors to anticipate all cases where an empty value might need to be
+  distinguished from a zero value
+- structs are not omitted from encoder output even where omitempty is specified, which is messy;
+- having a pointer consistently imply optional is clearer for users of the Go language client, and any
+  other clients that use corresponding types
+
+Therefore, we ask that pointers always be used with optional fields that do not have a built-in
+`nil` value.
+
 
 ## Defaulting
 
@@ -485,6 +542,10 @@ The following HTTP status codes may be returned by the API.
   * * If updating an existing resource:
       * See `Conflict` from the `status` response section below on how to retrieve more information about the nature of the conflict.
       * GET and compare the fields in the pre-existing object, merge changes (if still valid according to preconditions), and retry with the updated request (including `ResourceVersion`).
+* `410 StatusGone`
+  * Indicates that the item is no longer available at the server and no forwarding address is known.
+  * Suggested client recovery behavior
+    * Do not retry. Fix the request.
 * `422 StatusUnprocessableEntity`
   * Indicates that the requested create or update operation cannot be completed due to invalid data provided as part of the request.
   * Suggested client recovery behavior
@@ -666,7 +727,7 @@ Accumulate repeated events in the client, especially for frequent events, to red
 
 ## Label, selector, and annotation conventions
 
-Labels are the domain of users. They are intended to facilitate organization and management of API resources using attributes that are meaningful to users, as opposed to meaningful to the system. Think of them as user-created mp3 or email inbox labels, as opposed to the directory structure used by a program to store its data. The former is enables the user to apply an arbitrary ontology, whereas the latter is implementation-centric and inflexible. Users will use labels to select resources to operate on, display label values in CLI/UI columns, etc. Users should always retain full power and flexibility over the label schemas they apply to labels in their namespaces.
+Labels are the domain of users. They are intended to facilitate organization and management of API resources using attributes that are meaningful to users, as opposed to meaningful to the system. Think of them as user-created mp3 or email inbox labels, as opposed to the directory structure used by a program to store its data. The former enables the user to apply an arbitrary ontology, whereas the latter is implementation-centric and inflexible. Users will use labels to select resources to operate on, display label values in CLI/UI columns, etc. Users should always retain full power and flexibility over the label schemas they apply to labels in their namespaces.
 
 However, we should support conveniences for common cases by default. For example, what we now do in ReplicationController is automatically set the RC's selector and labels to the labels in the pod template by default, if they are not already set. That ensures that the selector will match the template, and that the RC can be managed using the same labels as the pods it creates. Note that once we generalize selectors, it won't necessarily be possible to unambiguously generate labels that match an arbitrary selector.
 
@@ -684,7 +745,7 @@ Therefore, resources supporting auto-generation of unique labels should have a `
 
 Annotations have very different intended usage from labels. We expect them to be primarily generated and consumed by tooling and system extensions. I'm inclined to generalize annotations to permit them to directly store arbitrary json. Rigid names and name prefixes make sense, since they are analogous to API fields.
 
-In fact, experimental API fields, including those used to represent fields of newer alpha/beta API versions in the older stable storage version, may be represented as annotations with the form `something.experimental.kubernetes.io/name`.  For example `net.experimental.kubernetes.io/policy` might represent an experimental network policy field.
+In fact, in-development API fields, including those used to represent fields of newer alpha/beta API versions in the older stable storage version, may be represented as annotations with the form `something.alpha.kubernetes.io/name` or `something.beta.kubernetes.io/name` (depending on our confidence in it).  For example `net.alpha.kubernetes.io/policy` might represent an experimental network policy field.  The "name" portion of the annotation should follow the below conventions for annotations.  When an annotation gets promoted to a field, the name transformation should then be mechanical: `foo-bar` becomes `fooBar`.
 
 Other advice regarding use of labels, annotations, and other generic map keys by Kubernetes components and tools:
   - Key names should be all lowercase, with words separated by dashes, such as `desired-replicas`
@@ -693,6 +754,51 @@ Other advice regarding use of labels, annotations, and other generic map keys by
   - Use annotations to store API extensions that the controller responsible for the resource doesn't need to know about, experimental fields that aren't intended to be generally used API fields, etc. Beware that annotations aren't automatically handled by the API conversion machinery.
 
 
+## WebSockets and SPDY
+
+Some of the API operations exposed by Kubernetes involve transfer of binary streams between the client and a container, including attach, exec, portforward, and logging. The API therefore exposes certain operations over upgradeable HTTP connections ([described in RFC 2817](https://tools.ietf.org/html/rfc2817)) via the WebSocket and SPDY protocols. These actions are exposed as subresources with their associated verbs (exec, log, attach, and portforward) and are requested via a GET (to support JavaScript in a browser) and POST (semantically accurate).
+
+There are two primary protocols in use today:
+
+1.  Streamed channels
+
+    When dealing with multiple independent binary streams of data such as the remote execution of a shell command (writing to STDIN, reading from STDOUT and STDERR) or forwarding multiple ports the streams can be multiplexed onto a single TCP connection. Kubernetes supports a SPDY based framing protocol that leverages SPDY channels and a WebSocket framing protocol that multiplexes multiple channels onto the same stream by prefixing each binary chunk with a byte indicating its channel. The WebSocket protocol supports an optional subprotocol that handles base64-encoded bytes from the client and returns base64-encoded bytes from the server and character based channel prefixes ('0', '1', '2') for ease of use from JavaScript in a browser.
+
+2.  Streaming response
+
+    The default log output for a channel of streaming data is an HTTP Chunked Transfer-Encoding, which can return an arbitrary stream of binary data from the server. Browser-based JavaScript is limited in its ability to access the raw data from a chunked response, especially when very large amounts of logs are returned, and in future API calls it may be desirable to transfer large files. The streaming API endpoints support an optional WebSocket upgrade that provides a unidirectional channel from the server to the client and chunks data as binary WebSocket frames. An optional WebSocket subprotocol is exposed that base64 encodes the stream before returning it to the client.
+
+Clients should use the SPDY protocols if their clients have native support, or WebSockets as a fallback. Note that WebSockets is susceptible to Head-of-Line blocking and so clients must read and process each message sequentionally. In the future, an HTTP/2 implementation will be exposed that deprecates SPDY.
+
+
+## Validation
+
+API objects are validated upon receipt by the apiserver.  Validation errors are
+flagged and returned to the caller in a `Failure` status with `reason` set to
+`Invalid`.  In order to facilitate consistent error messages, we ask that
+validation logic adheres to the following guidelines whenever possible (though
+exceptional cases will exist).
+
+* Be as precise as possible.
+* Telling users what they CAN do is more useful than telling them what they
+  CANNOT do.
+* When asserting a requirement in the positive, use "must".  Examples: "must be
+  greater than 0", "must match regex '[a-z]+'".  Words like "should" imply that
+  the assertion is optional, and must be avoided.
+* When asserting a formatting requirement in the negative, use "must not".
+  Example: "must not contain '..'".  Words like "should not" imply that the
+  assertion is optional, and must be avoided.
+* When asserting a behavioral requirement in the negative, use "may not".
+  Examples: "may not be specified when otherField is empty", "only `name` may be
+  specified".
+* When referencing a literal string value, indicate the literal in
+  single-quotes. Example: "must not contain '..'".
+* When referencing another field name, indicate the name in back-quotes.
+  Example: "must be greater than `request`".
+* When specifying inequalities, use words rather than symbols.  Examples: "must
+  be less than 256", "must be greater than or equal to 0".  Do not use words
+  like "larger than", "bigger than", "more than", "higher than", etc.
+* When specifying numeric ranges, use inclusive ranges when possible.
 
 
 

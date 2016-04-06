@@ -23,14 +23,15 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/errors"
 	"k8s.io/kubernetes/pkg/client/cache"
-	"k8s.io/kubernetes/pkg/client/unversioned/testclient"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
+	"k8s.io/kubernetes/pkg/client/testing/core"
 	"k8s.io/kubernetes/pkg/runtime"
 )
 
 // TestAdmission verifies a namespace is created on create requests for namespace managed resources
 func TestAdmission(t *testing.T) {
 	namespace := "test"
-	mockClient := &testclient.Fake{}
+	mockClient := &fake.Clientset{}
 	handler := &provision{
 		client: mockClient,
 		store:  cache.NewStore(cache.MetaNamespaceKeyFunc),
@@ -42,7 +43,7 @@ func TestAdmission(t *testing.T) {
 			Containers: []api.Container{{Name: "ctr", Image: "image"}},
 		},
 	}
-	err := handler.Admit(admission.NewAttributesRecord(&pod, "Pod", pod.Namespace, pod.Name, "pods", "", admission.Create, nil))
+	err := handler.Admit(admission.NewAttributesRecord(&pod, api.Kind("Pod"), pod.Namespace, pod.Name, api.Resource("pods"), "", admission.Create, nil))
 	if err != nil {
 		t.Errorf("Unexpected error returned from admission handler")
 	}
@@ -58,7 +59,7 @@ func TestAdmission(t *testing.T) {
 // TestAdmissionNamespaceExists verifies that no client call is made when a namespace already exists
 func TestAdmissionNamespaceExists(t *testing.T) {
 	namespace := "test"
-	mockClient := &testclient.Fake{}
+	mockClient := &fake.Clientset{}
 	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
 	store.Add(&api.Namespace{
 		ObjectMeta: api.ObjectMeta{Name: namespace},
@@ -74,7 +75,7 @@ func TestAdmissionNamespaceExists(t *testing.T) {
 			Containers: []api.Container{{Name: "ctr", Image: "image"}},
 		},
 	}
-	err := handler.Admit(admission.NewAttributesRecord(&pod, "Pod", pod.Namespace, pod.Name, "pods", "", admission.Create, nil))
+	err := handler.Admit(admission.NewAttributesRecord(&pod, api.Kind("Pod"), pod.Namespace, pod.Name, api.Resource("pods"), "", admission.Create, nil))
 	if err != nil {
 		t.Errorf("Unexpected error returned from admission handler")
 	}
@@ -86,7 +87,7 @@ func TestAdmissionNamespaceExists(t *testing.T) {
 // TestIgnoreAdmission validates that a request is ignored if its not a create
 func TestIgnoreAdmission(t *testing.T) {
 	namespace := "test"
-	mockClient := &testclient.Fake{}
+	mockClient := &fake.Clientset{}
 	handler := admission.NewChainHandler(createProvision(mockClient, nil))
 	pod := api.Pod{
 		ObjectMeta: api.ObjectMeta{Name: "123", Namespace: namespace},
@@ -95,7 +96,7 @@ func TestIgnoreAdmission(t *testing.T) {
 			Containers: []api.Container{{Name: "ctr", Image: "image"}},
 		},
 	}
-	err := handler.Admit(admission.NewAttributesRecord(&pod, "Pod", pod.Namespace, pod.Name, "pods", "", admission.Update, nil))
+	err := handler.Admit(admission.NewAttributesRecord(&pod, api.Kind("Pod"), pod.Namespace, pod.Name, api.Resource("pods"), "", admission.Update, nil))
 	if err != nil {
 		t.Errorf("Unexpected error returned from admission handler")
 	}
@@ -107,9 +108,9 @@ func TestIgnoreAdmission(t *testing.T) {
 // TestAdmissionNamespaceExistsUnknownToHandler
 func TestAdmissionNamespaceExistsUnknownToHandler(t *testing.T) {
 	namespace := "test"
-	mockClient := &testclient.Fake{}
-	mockClient.AddReactor("create", "namespaces", func(action testclient.Action) (bool, runtime.Object, error) {
-		return true, nil, errors.NewAlreadyExists("namespaces", namespace)
+	mockClient := &fake.Clientset{}
+	mockClient.AddReactor("create", "namespaces", func(action core.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.NewAlreadyExists(api.Resource("namespaces"), namespace)
 	})
 
 	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
@@ -124,7 +125,7 @@ func TestAdmissionNamespaceExistsUnknownToHandler(t *testing.T) {
 			Containers: []api.Container{{Name: "ctr", Image: "image"}},
 		},
 	}
-	err := handler.Admit(admission.NewAttributesRecord(&pod, "Pod", pod.Namespace, pod.Name, "pods", "", admission.Create, nil))
+	err := handler.Admit(admission.NewAttributesRecord(&pod, api.Kind("Pod"), pod.Namespace, pod.Name, api.Resource("pods"), "", admission.Create, nil))
 	if err != nil {
 		t.Errorf("Unexpected error returned from admission handler")
 	}

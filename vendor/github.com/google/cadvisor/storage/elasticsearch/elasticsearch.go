@@ -15,14 +15,21 @@
 package elasticsearch
 
 import (
+	"flag"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	info "github.com/google/cadvisor/info/v1"
 	storage "github.com/google/cadvisor/storage"
+
 	"gopkg.in/olivere/elastic.v2"
 )
+
+func init() {
+	storage.RegisterStorageDriver("elasticsearch", new)
+}
 
 type elasticStorage struct {
 	client      *elastic.Client
@@ -37,6 +44,27 @@ type detailSpec struct {
 	MachineName    string               `json:"machine_name,omitempty"`
 	ContainerName  string               `json:"container_Name,omitempty"`
 	ContainerStats *info.ContainerStats `json:"container_stats,omitempty"`
+}
+
+var (
+	argElasticHost   = flag.String("storage_driver_es_host", "http://localhost:9200", "ElasticSearch host:port")
+	argIndexName     = flag.String("storage_driver_es_index", "cadvisor", "ElasticSearch index name")
+	argTypeName      = flag.String("storage_driver_es_type", "stats", "ElasticSearch type name")
+	argEnableSniffer = flag.Bool("storage_driver_es_enable_sniffer", false, "ElasticSearch uses a sniffing process to find all nodes of your cluster by default, automatically")
+)
+
+func new() (storage.StorageDriver, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return nil, err
+	}
+	return newStorage(
+		hostname,
+		*argIndexName,
+		*argTypeName,
+		*argElasticHost,
+		*argEnableSniffer,
+	)
 }
 
 func (self *elasticStorage) containerStatsAndDefaultValues(
@@ -75,7 +103,8 @@ func (self *elasticStorage) AddStats(ref info.ContainerReference, stats *info.Co
 			Do()
 		if err != nil {
 			// Handle error
-			panic(fmt.Errorf("failed to write stats to ElasticSearch- %s", err))
+			fmt.Printf("failed to write stats to ElasticSearch - %s", err)
+			return
 		}
 	}()
 	return nil
@@ -89,7 +118,8 @@ func (self *elasticStorage) Close() error {
 // machineName: A unique identifier to identify the host that current cAdvisor
 // instance is running on.
 // ElasticHost: The host which runs ElasticSearch.
-func New(machineName,
+func newStorage(
+	machineName,
 	indexName,
 	typeName,
 	elasticHost string,
@@ -106,14 +136,15 @@ func New(machineName,
 	)
 	if err != nil {
 		// Handle error
-		panic(err)
+		return nil, fmt.Errorf("failed to create the elasticsearch client - %s", err)
 	}
 
 	// Ping the Elasticsearch server to get e.g. the version number
 	info, code, err := client.Ping().URL(elasticHost).Do()
 	if err != nil {
 		// Handle error
-		panic(err)
+		return nil, fmt.Errorf("failed to ping the elasticsearch - %s", err)
+
 	}
 	fmt.Printf("Elasticsearch returned with code %d and version %s", code, info.Version.Number)
 

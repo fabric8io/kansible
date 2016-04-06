@@ -7,16 +7,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
+	"net/url"
 	"reflect"
 	"strings"
 	"text/template"
 
 	"github.com/docker/docker/cliconfig"
-	"github.com/docker/docker/pkg/homedir"
 	flag "github.com/docker/docker/pkg/mflag"
+	"github.com/docker/docker/pkg/sockets"
 	"github.com/docker/docker/pkg/term"
-	"github.com/docker/docker/utils"
 )
 
 // DockerCli represents the docker command line client.
@@ -26,6 +25,8 @@ type DockerCli struct {
 	proto string
 	// addr holds the client address.
 	addr string
+	// basePath holds the path to prepend to the requests
+	basePath string
 
 	// configFile has the client configuration file
 	configFile *cliconfig.ConfigFile
@@ -107,29 +108,62 @@ func (cli *DockerCli) Cmd(args ...string) error {
 // A subcommand represents an action that can be performed
 // from the Docker command line client.
 //
+// Multiple subcommand synopses may be provided with one 'Usage' line being
+// printed for each in the following way:
+//
+//	Usage:	docker <subcmd-name> [OPTIONS] <synopsis 0>
+// 		docker <subcmd-name> [OPTIONS] <synopsis 1>
+// 		...
+//
+// If no undeprecated flags are added to the returned FlagSet, "[OPTIONS]" will
+// not be included on the usage synopsis lines. If no synopses are given, only
+// one usage synopsis line will be printed with nothing following the
+// "[OPTIONS]" section
+//
 // To see all available subcommands, run "docker --help".
-func (cli *DockerCli) Subcmd(name, signature, description string, exitOnError bool) *flag.FlagSet {
+func (cli *DockerCli) Subcmd(name string, synopses []string, description string, exitOnError bool) *flag.FlagSet {
 	var errorHandling flag.ErrorHandling
 	if exitOnError {
 		errorHandling = flag.ExitOnError
 	} else {
 		errorHandling = flag.ContinueOnError
 	}
+
 	flags := flag.NewFlagSet(name, errorHandling)
-	if signature != "" {
-		signature = " " + signature
-	}
+
 	flags.Usage = func() {
 		flags.ShortUsage()
 		flags.PrintDefaults()
 	}
+
 	flags.ShortUsage = func() {
 		options := ""
 		if flags.FlagCountUndeprecated() > 0 {
 			options = " [OPTIONS]"
 		}
-		fmt.Fprintf(flags.Out(), "\nUsage: docker %s%s%s\n\n%s\n", name, options, signature, description)
+
+		if len(synopses) == 0 {
+			synopses = []string{""}
+		}
+
+		// Allow for multiple command usage synopses.
+		for i, synopsis := range synopses {
+			lead := "\t"
+			if i == 0 {
+				// First line needs the word 'Usage'.
+				lead = "Usage:\t"
+			}
+
+			if synopsis != "" {
+				synopsis = " " + synopsis
+			}
+
+			fmt.Fprintf(flags.Out(), "\n%sdocker %s%s%s", lead, name, options, synopsis)
+		}
+
+		fmt.Fprintf(flags.Out(), "\n\n%s\n", description)
 	}
+
 	return flags
 }
 
@@ -156,6 +190,7 @@ func NewDockerCli(in io.ReadCloser, out, err io.Writer, keyFile string, proto, a
 		isTerminalIn  = false
 		isTerminalOut = false
 		scheme        = "http"
+		basePath      = ""
 	)
 
 	if tlsConfig != nil {
@@ -177,16 +212,24 @@ func NewDockerCli(in io.ReadCloser, out, err io.Writer, keyFile string, proto, a
 	tr := &http.Transport{
 		TLSClientConfig: tlsConfig,
 	}
-	utils.ConfigureTCPTransport(tr, proto, addr)
+	sockets.ConfigureTCPTransport(tr, proto, addr)
 
-	configFile, e := cliconfig.Load(filepath.Join(homedir.Get(), ".docker"))
+	configFile, e := cliconfig.Load(cliconfig.ConfigDir())
 	if e != nil {
 		fmt.Fprintf(err, "WARNING: Error loading config file:%v\n", e)
+	}
+
+	if proto == "tcp" {
+		// error is checked in pkg/parsers already
+		parsed, _ := url.Parse("tcp://" + addr)
+		addr = parsed.Host
+		basePath = parsed.Path
 	}
 
 	return &DockerCli{
 		proto:         proto,
 		addr:          addr,
+		basePath:      basePath,
 		configFile:    configFile,
 		in:            in,
 		out:           out,

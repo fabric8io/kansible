@@ -26,7 +26,7 @@ import (
 	"strings"
 	"testing"
 
-	client "k8s.io/kubernetes/pkg/client/unversioned"
+	"k8s.io/kubernetes/pkg/client/restclient"
 )
 
 func TestAccept(t *testing.T) {
@@ -63,6 +63,15 @@ func TestAccept(t *testing.T) {
 			rejectPaths:  DefaultPathRejectRE,
 			acceptHosts:  DefaultHostAcceptRE,
 			path:         "/api/v1/pods/foo/exec",
+			host:         "127.0.0.1",
+			method:       "GET",
+			expectAccept: false,
+		},
+		{
+			acceptPaths:  DefaultPathAcceptRE,
+			rejectPaths:  DefaultPathRejectRE,
+			acceptHosts:  DefaultHostAcceptRE,
+			path:         "/api/v1/pods/foo/attach",
 			host:         "127.0.0.1",
 			method:       "GET",
 			expectAccept: false,
@@ -196,7 +205,8 @@ func TestFileServing(t *testing.T) {
 	const prefix = "/foo/"
 	handler := newFileHandler(prefix, dir)
 	server := httptest.NewServer(handler)
-	defer server.Close()
+	// TODO: Uncomment when fix #19254
+	// defer server.Close()
 
 	url := server.URL + prefix + fname
 	res, err := http.Get(url)
@@ -226,7 +236,8 @@ func TestAPIRequests(t *testing.T) {
 		}
 		fmt.Fprintf(w, "%s %s %s", r.Method, r.RequestURI, string(b))
 	}))
-	defer ts.Close()
+	// TODO: Uncomment when fix #19254
+	// defer ts.Close()
 
 	// httptest.NewServer should always generate a valid URL.
 	target, _ := url.Parse(ts.URL)
@@ -262,7 +273,8 @@ func TestPathHandling(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, r.URL.Path)
 	}))
-	defer ts.Close()
+	// TODO: Uncomment when fix #19254
+	// defer ts.Close()
 
 	table := []struct {
 		prefix     string
@@ -281,7 +293,7 @@ func TestPathHandling(t *testing.T) {
 		{"/custom/", "/custom/api/v1/pods/", "/api/v1/pods/"},
 	}
 
-	cc := &client.Config{
+	cc := &restclient.Config{
 		Host: ts.URL,
 	}
 
@@ -292,7 +304,8 @@ func TestPathHandling(t *testing.T) {
 				t.Fatalf("%#v: %v", item, err)
 			}
 			pts := httptest.NewServer(p.handler)
-			defer pts.Close()
+			// TODO: Uncomment when fix #19254
+			// defer pts.Close()
 
 			r, err := http.Get(pts.URL + item.reqPath)
 			if err != nil {

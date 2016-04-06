@@ -18,6 +18,7 @@ package api
 
 import (
 	"crypto/md5"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -53,8 +54,7 @@ func (c *ConversionError) Error() string {
 var Semantic = conversion.EqualitiesOrDie(
 	func(a, b resource.Quantity) bool {
 		// Ignore formatting, only care that numeric value stayed the same.
-		// TODO: if we decide it's important, after we drop v1beta1/2, we
-		// could start comparing format.
+		// TODO: if we decide it's important, it should be safe to start comparing the format.
 		//
 		// Uninitialized quantities are equivalent to 0 quantities.
 		if a.Amount == nil && b.MilliValue() == 0 {
@@ -79,19 +79,121 @@ var Semantic = conversion.EqualitiesOrDie(
 	},
 )
 
-var standardResources = sets.NewString(
-	string(ResourceMemory),
+var standardResourceQuotaScopes = sets.NewString(
+	string(ResourceQuotaScopeTerminating),
+	string(ResourceQuotaScopeNotTerminating),
+	string(ResourceQuotaScopeBestEffort),
+	string(ResourceQuotaScopeNotBestEffort),
+)
+
+// IsStandardResourceQuotaScope returns true if the scope is a standard value
+func IsStandardResourceQuotaScope(str string) bool {
+	return standardResourceQuotaScopes.Has(str)
+}
+
+var podObjectCountQuotaResources = sets.NewString(
+	string(ResourcePods),
+)
+
+var podComputeQuotaResources = sets.NewString(
 	string(ResourceCPU),
+	string(ResourceMemory),
+	string(ResourceLimitsCPU),
+	string(ResourceLimitsMemory),
+	string(ResourceRequestsCPU),
+	string(ResourceRequestsMemory),
+)
+
+// IsResourceQuotaScopeValidForResource returns true if the resource applies to the specified scope
+func IsResourceQuotaScopeValidForResource(scope ResourceQuotaScope, resource string) bool {
+	switch scope {
+	case ResourceQuotaScopeTerminating, ResourceQuotaScopeNotTerminating, ResourceQuotaScopeNotBestEffort:
+		return podObjectCountQuotaResources.Has(resource) || podComputeQuotaResources.Has(resource)
+	case ResourceQuotaScopeBestEffort:
+		return podObjectCountQuotaResources.Has(resource)
+	default:
+		return true
+	}
+}
+
+var standardContainerResources = sets.NewString(
+	string(ResourceCPU),
+	string(ResourceMemory),
+)
+
+// IsStandardContainerResourceName returns true if the container can make a resource request
+// for the specified resource
+func IsStandardContainerResourceName(str string) bool {
+	return standardContainerResources.Has(str)
+}
+
+var standardLimitRangeTypes = sets.NewString(
+	string(LimitTypePod),
+	string(LimitTypeContainer),
+)
+
+// IsStandardLimitRangeType returns true if the type is Pod or Container
+func IsStandardLimitRangeType(str string) bool {
+	return standardLimitRangeTypes.Has(str)
+}
+
+var standardQuotaResources = sets.NewString(
+	string(ResourceCPU),
+	string(ResourceMemory),
+	string(ResourceRequestsCPU),
+	string(ResourceRequestsMemory),
+	string(ResourceLimitsCPU),
+	string(ResourceLimitsMemory),
 	string(ResourcePods),
 	string(ResourceQuotas),
 	string(ResourceServices),
 	string(ResourceReplicationControllers),
 	string(ResourceSecrets),
 	string(ResourcePersistentVolumeClaims),
-	string(ResourceStorage))
+	string(ResourceConfigMaps),
+)
 
+// IsStandardQuotaResourceName returns true if the resource is known to
+// the quota tracking system
+func IsStandardQuotaResourceName(str string) bool {
+	return standardQuotaResources.Has(str)
+}
+
+var standardResources = sets.NewString(
+	string(ResourceCPU),
+	string(ResourceMemory),
+	string(ResourceRequestsCPU),
+	string(ResourceRequestsMemory),
+	string(ResourceLimitsCPU),
+	string(ResourceLimitsMemory),
+	string(ResourcePods),
+	string(ResourceQuotas),
+	string(ResourceServices),
+	string(ResourceReplicationControllers),
+	string(ResourceSecrets),
+	string(ResourceConfigMaps),
+	string(ResourcePersistentVolumeClaims),
+	string(ResourceStorage),
+)
+
+// IsStandardResourceName returns true if the resource is known to the system
 func IsStandardResourceName(str string) bool {
 	return standardResources.Has(str)
+}
+
+var integerResources = sets.NewString(
+	string(ResourcePods),
+	string(ResourceQuotas),
+	string(ResourceServices),
+	string(ResourceReplicationControllers),
+	string(ResourceSecrets),
+	string(ResourceConfigMaps),
+	string(ResourcePersistentVolumeClaims),
+)
+
+// IsIntegerResourceName returns true if the resource is measured in integer values
+func IsIntegerResourceName(str string) bool {
+	return integerResources.Has(str)
 }
 
 // NewDeleteOptions returns a DeleteOptions indicating the resource should
@@ -138,7 +240,7 @@ func AddToNodeAddresses(addresses *[]NodeAddress, addAddresses ...NodeAddress) {
 }
 
 func HashObject(obj runtime.Object, codec runtime.Codec) (string, error) {
-	data, err := codec.Encode(obj)
+	data, err := runtime.Encode(codec, obj)
 	if err != nil {
 		return "", err
 	}
@@ -247,4 +349,55 @@ func ParseRFC3339(s string, nowFn func() unversioned.Time) (unversioned.Time, er
 		return unversioned.Time{}, err
 	}
 	return unversioned.Time{t}, nil
+}
+
+// NodeSelectorRequirementsAsSelector converts the []NodeSelectorRequirement api type into a struct that implements
+// labels.Selector.
+func NodeSelectorRequirementsAsSelector(nsm []NodeSelectorRequirement) (labels.Selector, error) {
+	if len(nsm) == 0 {
+		return labels.Nothing(), nil
+	}
+	selector := labels.NewSelector()
+	for _, expr := range nsm {
+		var op labels.Operator
+		switch expr.Operator {
+		case NodeSelectorOpIn:
+			op = labels.InOperator
+		case NodeSelectorOpNotIn:
+			op = labels.NotInOperator
+		case NodeSelectorOpExists:
+			op = labels.ExistsOperator
+		case NodeSelectorOpDoesNotExist:
+			op = labels.DoesNotExistOperator
+		case NodeSelectorOpGt:
+			op = labels.GreaterThanOperator
+		case NodeSelectorOpLt:
+			op = labels.LessThanOperator
+		default:
+			return nil, fmt.Errorf("%q is not a valid node selector operator", expr.Operator)
+		}
+		r, err := labels.NewRequirement(expr.Key, op, sets.NewString(expr.Values...))
+		if err != nil {
+			return nil, err
+		}
+		selector = selector.Add(*r)
+	}
+	return selector, nil
+}
+
+// AffinityAnnotationKey represents the key of affinity data (json serialized)
+// in the Annotations of a Pod.
+const AffinityAnnotationKey string = "scheduler.alpha.kubernetes.io/affinity"
+
+// GetAffinityFromPod gets the json serialized affinity data from Pod.Annotations
+// and converts it to the Affinity type in api.
+func GetAffinityFromPodAnnotations(annotations map[string]string) (Affinity, error) {
+	var affinity Affinity
+	if len(annotations) > 0 && annotations[AffinityAnnotationKey] != "" {
+		err := json.Unmarshal([]byte(annotations[AffinityAnnotationKey]), &affinity)
+		if err != nil {
+			return affinity, err
+		}
+	}
+	return affinity, nil
 }

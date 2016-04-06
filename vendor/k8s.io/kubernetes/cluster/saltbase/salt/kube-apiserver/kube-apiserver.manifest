@@ -7,9 +7,16 @@
 {% set cloud_config = "" -%}
 {% set cloud_config_mount = "" -%}
 {% set cloud_config_volume = "" -%}
+{% set additional_cloud_config_mount = "{\"name\": \"usrsharessl\",\"mountPath\": \"/usr/share/ssl\", \"readOnly\": true}, {\"name\": \"usrssl\",\"mountPath\": \"/usr/ssl\", \"readOnly\": true}, {\"name\": \"usrlibssl\",\"mountPath\": \"/usr/lib/ssl\", \"readOnly\": true}, {\"name\": \"usrlocalopenssl\",\"mountPath\": \"/usr/local/openssl\", \"readOnly\": true}," -%}
+{% set additional_cloud_config_volume = "{\"name\": \"usrsharessl\",\"hostPath\": {\"path\": \"/usr/share/ssl\"}}, {\"name\": \"usrssl\",\"hostPath\": {\"path\": \"/usr/ssl\"}}, {\"name\": \"usrlibssl\",\"hostPath\": {\"path\": \"/usr/lib/ssl\"}}, {\"name\": \"usrlocalopenssl\",\"hostPath\": {\"path\": \"/usr/local/openssl\"}}," -%}
+
+{% set srv_kube_path = "/srv/kubernetes" -%}
+{% set srv_sshproxy_path = "/srv/sshproxy" -%}
 
 {% if grains.cloud is defined -%}
-  {% set cloud_provider = "--cloud-provider=" + grains.cloud -%}
+  {% if grains.cloud not in ['vagrant', 'vsphere'] -%}
+    {% set cloud_provider = "--cloud-provider=" + grains.cloud -%}
+  {% endif -%}
 
   {% if grains.cloud in [ 'aws', 'gce' ] and grains.cloud_config is defined -%}
     {% set cloud_config = "--cloud-config=" + grains.cloud_config -%}
@@ -33,11 +40,6 @@
 
 {% set address = "--address=127.0.0.1" -%}
 
-{% set cluster_name = "" -%}
-{% if pillar['instance_prefix'] is defined -%}
-  {% set cluster_name = "--cluster-name=" + pillar['instance_prefix'] -%}
-{% endif -%}
-
 {% set bind_address = "" -%}
 {% if grains.publicAddressOverride is defined -%}
   {% set bind_address = "--bind-address=" + grains.publicAddressOverride -%}
@@ -56,7 +58,7 @@
 {% set client_ca_file = "" -%}
 
 {% set secure_port = "6443" -%}
-{% if grains['cloud'] is defined and grains.cloud in [ 'aws', 'gce', 'vagrant' ]    %}
+{% if grains['cloud'] is defined and grains.cloud in [ 'aws', 'gce', 'vagrant', 'vsphere' ]    %}
   {% set secure_port = "443" -%}
   {% set client_ca_file = "--client-ca-file=/srv/kubernetes/ca.crt" -%}
 {% endif -%}
@@ -70,12 +72,12 @@
 {% endif -%}
 
 {% if grains.cloud is defined -%}
-{% if grains.cloud in [ 'aws', 'gce', 'vagrant' ] -%}
+{% if grains.cloud in [ 'aws', 'gce', 'vagrant', 'vsphere' ] -%}
     {% set token_auth_file = "--token-auth-file=/srv/kubernetes/known_tokens.csv" -%}
 {% endif -%}
 {% endif -%}
 
-{% if grains['cloud'] is defined and grains.cloud in [ 'aws', 'gce', 'vagrant']  %}
+{% if grains['cloud'] is defined and grains.cloud in [ 'aws', 'gce', 'vagrant', 'vsphere']  %}
   {% set basic_auth_file = "--basic-auth-file=/srv/kubernetes/basic_auth.csv" -%}
 {% endif -%}
 
@@ -89,8 +91,13 @@
  {% set runtime_config = "--runtime-config=" + grains.runtime_config -%}
 {% endif -%}
 
+{% set log_level = pillar['log_level'] -%}
+{% if pillar['api_server_test_log_level'] is defined -%}
+  {% set log_level = pillar['api_server_test_log_level'] -%}
+{% endif -%}
+
 {% set params = address + " " + etcd_servers + " " + etcd_servers_overrides + " " + cloud_provider + " " + cloud_config + " " + runtime_config + " " + admission_control + " " + service_cluster_ip_range + " " + client_ca_file + " " + basic_auth_file + " " + min_request_timeout -%}
-{% set params = params + " " + cluster_name + " " + cert_file + " " + key_file + " --secure-port=" + secure_port + " " + token_auth_file + " " + bind_address + " " + pillar['log_level'] + " " + advertise_address  + " " + proxy_ssh_options -%}
+{% set params = params + " " + cert_file + " " + key_file + " --secure-port=" + secure_port + " " + token_auth_file + " " + bind_address + " " + log_level + " " + advertise_address  + " " + proxy_ssh_options -%}
 
 # test_args has to be kept at the end, so they'll overwrite any prior configuration
 {% if pillar['apiserver_test_args'] is defined -%}
@@ -109,9 +116,9 @@
 "containers":[
     {
     "name": "kube-apiserver",
-    "image": "gcr.io/google_containers/kube-apiserver:{{pillar['kube-apiserver_docker_tag']}}",
+    "image": "{{pillar['kube_docker_registry']}}/kube-apiserver:{{pillar['kube-apiserver_docker_tag']}}",
     "resources": {
-      "limits": {
+      "requests": {
         "cpu": "250m"
       }
     },
@@ -139,8 +146,9 @@
         ],
     "volumeMounts": [
         {{cloud_config_mount}}
+        {{additional_cloud_config_mount}}
         { "name": "srvkube",
-        "mountPath": "/srv/kubernetes",
+        "mountPath": "{{srv_kube_path}}",
         "readOnly": true},
         { "name": "logfile",
         "mountPath": "/var/log/kube-apiserver.log",
@@ -148,20 +156,8 @@
         { "name": "etcssl",
         "mountPath": "/etc/ssl",
         "readOnly": true},
-        { "name": "usrsharessl",
-        "mountPath": "/usr/share/ssl",
-        "readOnly": true},
         { "name": "varssl",
         "mountPath": "/var/ssl",
-        "readOnly": true},
-        { "name": "usrssl",
-        "mountPath": "/usr/ssl",
-        "readOnly": true},
-        { "name": "usrlibssl",
-        "mountPath": "/usr/lib/ssl",
-        "readOnly": true},
-        { "name": "usrlocalopenssl",
-        "mountPath": "/usr/local/openssl",
         "readOnly": true},
         { "name": "etcopenssl",
         "mountPath": "/etc/openssl",
@@ -170,16 +166,17 @@
         "mountPath": "/etc/pki/tls",
         "readOnly": true},
         { "name": "srvsshproxy",
-        "mountPath": "/srv/sshproxy",
+        "mountPath": "{{srv_sshproxy_path}}",
         "readOnly": false}
       ]
     }
 ],
 "volumes":[
   {{cloud_config_volume}}
+  {{additional_cloud_config_volume}}
   { "name": "srvkube",
     "hostPath": {
-        "path": "/srv/kubernetes"}
+        "path": "{{srv_kube_path}}"}
   },
   { "name": "logfile",
     "hostPath": {
@@ -189,25 +186,9 @@
     "hostPath": {
         "path": "/etc/ssl"}
   },
-  { "name": "usrsharessl",
-    "hostPath": {
-        "path": "/usr/share/ssl"}
-  },
   { "name": "varssl",
     "hostPath": {
         "path": "/var/ssl"}
-  },
-  { "name": "usrssl",
-    "hostPath": {
-        "path": "/usr/ssl"}
-  },
-  { "name": "usrlibssl",
-    "hostPath": {
-        "path": "/usr/lib/ssl"}
-  },
-  { "name": "usrlocalopenssl",
-    "hostPath": {
-        "path": "/usr/local/openssl"}
   },
   { "name": "etcopenssl",
     "hostPath": {
@@ -219,7 +200,7 @@
   },
   { "name": "srvsshproxy",
     "hostPath": {
-        "path": "/srv/sshproxy"}
+        "path": "{{srv_sshproxy_path}}"}
   }
 ]
 }}

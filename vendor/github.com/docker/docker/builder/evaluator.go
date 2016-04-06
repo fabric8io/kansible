@@ -98,8 +98,8 @@ type Builder struct {
 	// the final configs of the Dockerfile but dont want the layers
 	disableCommit bool
 
-	AuthConfig *cliconfig.AuthConfig
-	ConfigFile *cliconfig.ConfigFile
+	// Registry server auth configs used to pull images when handling `FROM`.
+	AuthConfigs map[string]cliconfig.AuthConfig
 
 	// Deprecated, original writer used for ImagePull. To be removed.
 	OutOld          io.Writer
@@ -131,6 +131,9 @@ type Builder struct {
 	memorySwap   int64
 
 	cancelled <-chan struct{} // When closed, job was cancelled.
+
+	activeImages []string
+	id           string // Used to hold reference images
 }
 
 // Run the builder with the context. This is the lynchpin of this package. This

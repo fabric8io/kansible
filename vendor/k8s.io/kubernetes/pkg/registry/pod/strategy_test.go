@@ -17,10 +17,77 @@ limitations under the License.
 package pod
 
 import (
+	"reflect"
 	"testing"
 
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/errors"
+	"k8s.io/kubernetes/pkg/api/testapi"
+	apitesting "k8s.io/kubernetes/pkg/api/testing"
+	"k8s.io/kubernetes/pkg/fields"
+	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/runtime"
 )
+
+func TestMatchPod(t *testing.T) {
+	testCases := []struct {
+		in            *api.Pod
+		fieldSelector fields.Selector
+		expectMatch   bool
+	}{
+		{
+			in: &api.Pod{
+				Spec: api.PodSpec{NodeName: "nodeA"},
+			},
+			fieldSelector: fields.ParseSelectorOrDie("spec.nodeName=nodeA"),
+			expectMatch:   true,
+		},
+		{
+			in: &api.Pod{
+				Spec: api.PodSpec{NodeName: "nodeB"},
+			},
+			fieldSelector: fields.ParseSelectorOrDie("spec.nodeName=nodeA"),
+			expectMatch:   false,
+		},
+		{
+			in: &api.Pod{
+				Spec: api.PodSpec{RestartPolicy: api.RestartPolicyAlways},
+			},
+			fieldSelector: fields.ParseSelectorOrDie("spec.restartPolicy=Always"),
+			expectMatch:   true,
+		},
+		{
+			in: &api.Pod{
+				Spec: api.PodSpec{RestartPolicy: api.RestartPolicyAlways},
+			},
+			fieldSelector: fields.ParseSelectorOrDie("spec.restartPolicy=Never"),
+			expectMatch:   false,
+		},
+		{
+			in: &api.Pod{
+				Status: api.PodStatus{Phase: api.PodRunning},
+			},
+			fieldSelector: fields.ParseSelectorOrDie("status.phase=Running"),
+			expectMatch:   true,
+		},
+		{
+			in: &api.Pod{
+				Status: api.PodStatus{Phase: api.PodRunning},
+			},
+			fieldSelector: fields.ParseSelectorOrDie("status.phase=Pending"),
+			expectMatch:   false,
+		},
+	}
+	for _, testCase := range testCases {
+		result, err := MatchPod(labels.Everything(), testCase.fieldSelector).Matches(testCase.in)
+		if err != nil {
+			t.Errorf("Unexpected error %v", err)
+		}
+		if result != testCase.expectMatch {
+			t.Errorf("Result %v, Expected %v, Selector: %v, Pod: %v", result, testCase.expectMatch, testCase.fieldSelector.String(), testCase.in)
+		}
+	}
+}
 
 func TestCheckGracefulDelete(t *testing.T) {
 	defaultGracePeriod := int64(30)
@@ -75,4 +142,101 @@ func TestCheckGracefulDelete(t *testing.T) {
 			t.Errorf("out grace period was %v but was expected to be %v", *out, tc.gracePeriod)
 		}
 	}
+}
+
+type mockPodGetter struct {
+	pod *api.Pod
+}
+
+func (g mockPodGetter) Get(api.Context, string) (runtime.Object, error) {
+	return g.pod, nil
+}
+
+func TestCheckLogLocation(t *testing.T) {
+	ctx := api.NewDefaultContext()
+	tcs := []struct {
+		in          *api.Pod
+		opts        *api.PodLogOptions
+		expectedErr error
+	}{
+		{
+			in: &api.Pod{
+				Spec:   api.PodSpec{},
+				Status: api.PodStatus{},
+			},
+			opts:        &api.PodLogOptions{},
+			expectedErr: errors.NewBadRequest("a container name must be specified for pod test"),
+		},
+		{
+			in: &api.Pod{
+				Spec: api.PodSpec{
+					Containers: []api.Container{
+						{Name: "mycontainer"},
+					},
+				},
+				Status: api.PodStatus{},
+			},
+			opts:        &api.PodLogOptions{},
+			expectedErr: nil,
+		},
+		{
+			in: &api.Pod{
+				Spec: api.PodSpec{
+					Containers: []api.Container{
+						{Name: "container1"},
+						{Name: "container2"},
+					},
+				},
+				Status: api.PodStatus{},
+			},
+			opts:        &api.PodLogOptions{},
+			expectedErr: errors.NewBadRequest("a container name must be specified for pod test, choose one of: [container1 container2]"),
+		},
+		{
+			in: &api.Pod{
+				Spec: api.PodSpec{
+					Containers: []api.Container{
+						{Name: "container1"},
+						{Name: "container2"},
+					},
+				},
+				Status: api.PodStatus{},
+			},
+			opts: &api.PodLogOptions{
+				Container: "unknown",
+			},
+			expectedErr: errors.NewBadRequest("container unknown is not valid for pod test"),
+		},
+		{
+			in: &api.Pod{
+				Spec: api.PodSpec{
+					Containers: []api.Container{
+						{Name: "container1"},
+						{Name: "container2"},
+					},
+				},
+				Status: api.PodStatus{},
+			},
+			opts: &api.PodLogOptions{
+				Container: "container2",
+			},
+			expectedErr: nil,
+		},
+	}
+	for _, tc := range tcs {
+		getter := &mockPodGetter{tc.in}
+		_, _, err := LogLocation(getter, nil, ctx, "test", tc.opts)
+		if !reflect.DeepEqual(err, tc.expectedErr) {
+			t.Errorf("expected %v, got %v", tc.expectedErr, err)
+		}
+	}
+}
+
+func TestSelectableFieldLabelConversions(t *testing.T) {
+	apitesting.TestSelectableFieldLabelConversionsOfKind(t,
+		testapi.Default.GroupVersion().String(),
+		"Pod",
+		labels.Set(PodToSelectableFields(&api.Pod{})),
+		nil,
+	)
 }

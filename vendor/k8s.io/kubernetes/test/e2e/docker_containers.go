@@ -17,37 +17,25 @@ limitations under the License.
 package e2e
 
 import (
-	"time"
-
 	"k8s.io/kubernetes/pkg/api"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/util"
 
 	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("Docker Containers", func() {
+	framework := NewDefaultFramework("containers")
 	var c *client.Client
 	var ns string
 
 	BeforeEach(func() {
-		var err error
-		c, err = loadClient()
-		Expect(err).NotTo(HaveOccurred())
-		ns_, err := createTestingNS("containers", c)
-		ns = ns_.Name
-		Expect(err).NotTo(HaveOccurred())
-	})
-
-	AfterEach(func() {
-		if err := deleteNS(c, ns, 5*time.Minute /* namespace deletion timeout */); err != nil {
-			Failf("Couldn't delete ns %s", err)
-		}
+		c = framework.Client
+		ns = framework.Namespace.Name
 	})
 
 	It("should use the image defaults if command and args are blank [Conformance]", func() {
-		testContainerOutputInNamespace("use defaults", c, entrypointTestPod(), 0, []string{
+		testContainerOutput("use defaults", c, entrypointTestPod(), 0, []string{
 			"[/ep default arguments]",
 		}, ns)
 	})
@@ -56,7 +44,7 @@ var _ = Describe("Docker Containers", func() {
 		pod := entrypointTestPod()
 		pod.Spec.Containers[0].Args = []string{"override", "arguments"}
 
-		testContainerOutputInNamespace("override arguments", c, pod, 0, []string{
+		testContainerOutput("override arguments", c, pod, 0, []string{
 			"[/ep override arguments]",
 		}, ns)
 	})
@@ -67,7 +55,7 @@ var _ = Describe("Docker Containers", func() {
 		pod := entrypointTestPod()
 		pod.Spec.Containers[0].Command = []string{"/ep-2"}
 
-		testContainerOutputInNamespace("override command", c, pod, 0, []string{
+		testContainerOutput("override command", c, pod, 0, []string{
 			"[/ep-2]",
 		}, ns)
 	})
@@ -77,7 +65,7 @@ var _ = Describe("Docker Containers", func() {
 		pod.Spec.Containers[0].Command = []string{"/ep-2"}
 		pod.Spec.Containers[0].Args = []string{"override", "arguments"}
 
-		testContainerOutputInNamespace("override all", c, pod, 0, []string{
+		testContainerOutput("override all", c, pod, 0, []string{
 			"[/ep-2 override arguments]",
 		}, ns)
 	})

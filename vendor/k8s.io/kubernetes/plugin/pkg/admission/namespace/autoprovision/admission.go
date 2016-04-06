@@ -19,20 +19,18 @@ package autoprovision
 import (
 	"io"
 
+	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
+
 	"k8s.io/kubernetes/pkg/admission"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/client/cache"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/watch"
 )
 
 func init() {
-	admission.RegisterPlugin("NamespaceAutoProvision", func(client client.Interface, config io.Reader) (admission.Interface, error) {
+	admission.RegisterPlugin("NamespaceAutoProvision", func(client clientset.Interface, config io.Reader) (admission.Interface, error) {
 		return NewProvision(client), nil
 	})
 }
@@ -42,22 +40,18 @@ func init() {
 // It is useful in deployments that do not want to restrict creation of a namespace prior to its usage.
 type provision struct {
 	*admission.Handler
-	client client.Interface
+	client clientset.Interface
 	store  cache.Store
 }
 
 func (p *provision) Admit(a admission.Attributes) (err error) {
-	defaultVersion, kind, err := api.RESTMapper.VersionAndKindForResource(a.GetResource())
-	if err != nil {
-		return admission.NewForbidden(a, err)
-	}
-	mapping, err := api.RESTMapper.RESTMapping(kind, defaultVersion)
-	if err != nil {
-		return admission.NewForbidden(a, err)
-	}
-	if mapping.Scope.Name() != meta.RESTScopeNameNamespace {
+	// if we're here, then we've already passed authentication, so we're allowed to do what we're trying to do
+	// if we're here, then the API server has found a route, which means that if we have a non-empty namespace
+	// its a namespaced resource.
+	if len(a.GetNamespace()) == 0 || a.GetKind() == api.Kind("Namespace") {
 		return nil
 	}
+
 	namespace := &api.Namespace{
 		ObjectMeta: api.ObjectMeta{
 			Name:      a.GetNamespace(),
@@ -72,7 +66,7 @@ func (p *provision) Admit(a admission.Attributes) (err error) {
 	if exists {
 		return nil
 	}
-	_, err = p.client.Namespaces().Create(namespace)
+	_, err = p.client.Core().Namespaces().Create(namespace)
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return admission.NewForbidden(a, err)
 	}
@@ -80,15 +74,15 @@ func (p *provision) Admit(a admission.Attributes) (err error) {
 }
 
 // NewProvision creates a new namespace provision admission control handler
-func NewProvision(c client.Interface) admission.Interface {
+func NewProvision(c clientset.Interface) admission.Interface {
 	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
 	reflector := cache.NewReflector(
 		&cache.ListWatch{
-			ListFunc: func() (runtime.Object, error) {
-				return c.Namespaces().List(labels.Everything(), fields.Everything())
+			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
+				return c.Core().Namespaces().List(options)
 			},
-			WatchFunc: func(resourceVersion string) (watch.Interface, error) {
-				return c.Namespaces().Watch(labels.Everything(), fields.Everything(), resourceVersion)
+			WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
+				return c.Core().Namespaces().Watch(options)
 			},
 		},
 		&api.Namespace{},
@@ -99,7 +93,7 @@ func NewProvision(c client.Interface) admission.Interface {
 	return createProvision(c, store)
 }
 
-func createProvision(c client.Interface, store cache.Store) admission.Interface {
+func createProvision(c clientset.Interface, store cache.Store) admission.Interface {
 	return &provision{
 		Handler: admission.NewHandler(admission.Create),
 		client:  c,

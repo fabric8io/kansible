@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/testapi"
 	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/pkg/apis/extensions"
@@ -86,13 +87,13 @@ func TestCodec(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		codec := thirdPartyResourceDataCodec{kind: "Foo"}
+		codec := &thirdPartyResourceDataCodec{kind: "Foo", delegate: testapi.Extensions.Codec()}
 		data, err := json.Marshal(test.obj)
 		if err != nil {
 			t.Errorf("[%s] unexpected error: %v", test.name, err)
 			continue
 		}
-		obj, err := codec.Decode(data)
+		obj, err := runtime.Decode(codec, data)
 		if err != nil && !test.expectErr {
 			t.Errorf("[%s] unexpected error: %v", test.name, err)
 			continue
@@ -120,7 +121,7 @@ func TestCodec(t *testing.T) {
 			t.Errorf("[%s]\nexpected\n%v\nsaw\n%v\n", test.name, test.obj, &output)
 		}
 
-		data, err = codec.Encode(rsrcObj)
+		data, err = runtime.Encode(codec, rsrcObj)
 		if err != nil {
 			t.Errorf("[%s] unexpected error: %v", test.name, err)
 		}
@@ -140,35 +141,31 @@ func TestCreater(t *testing.T) {
 	creater := NewObjectCreator("creater group", "creater version", api.Scheme)
 	tests := []struct {
 		name        string
-		version     string
-		kind        string
+		kind        unversioned.GroupVersionKind
 		expectedObj runtime.Object
 		expectErr   bool
 	}{
 		{
 			name:        "valid ThirdPartyResourceData creation",
-			version:     "creater group/creater version",
-			kind:        "ThirdPartyResourceData",
+			kind:        unversioned.GroupVersionKind{Group: "creater group", Version: "creater version", Kind: "ThirdPartyResourceData"},
 			expectedObj: &extensions.ThirdPartyResourceData{},
 			expectErr:   false,
 		},
 		{
 			name:        "invalid ThirdPartyResourceData creation",
-			version:     "invalid version",
-			kind:        "ThirdPartyResourceData",
+			kind:        unversioned.GroupVersionKind{Version: "invalid version", Kind: "ThirdPartyResourceData"},
 			expectedObj: nil,
 			expectErr:   true,
 		},
 		{
 			name:        "valid ListOptions creation",
-			version:     "v1",
-			kind:        "ListOptions",
+			kind:        unversioned.GroupVersionKind{Version: "v1", Kind: "ListOptions"},
 			expectedObj: &v1.ListOptions{},
 			expectErr:   false,
 		},
 	}
 	for _, test := range tests {
-		out, err := creater.New(test.version, test.kind)
+		out, err := creater.New(test.kind)
 		if err != nil && !test.expectErr {
 			t.Errorf("[%s] unexpected error: %v", test.name, err)
 		}

@@ -21,21 +21,19 @@ import (
 	"io"
 	"time"
 
+	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
+
 	"k8s.io/kubernetes/pkg/admission"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/client/cache"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/util/sets"
 	"k8s.io/kubernetes/pkg/watch"
 )
 
 func init() {
-	admission.RegisterPlugin("NamespaceLifecycle", func(client client.Interface, config io.Reader) (admission.Interface, error) {
+	admission.RegisterPlugin("NamespaceLifecycle", func(client clientset.Interface, config io.Reader) (admission.Interface, error) {
 		return NewLifecycle(client), nil
 	})
 }
@@ -44,29 +42,36 @@ func init() {
 // It enforces life-cycle constraints around a Namespace depending on its Phase
 type lifecycle struct {
 	*admission.Handler
-	client             client.Interface
+	client             clientset.Interface
 	store              cache.Store
 	immortalNamespaces sets.String
 }
 
 func (l *lifecycle) Admit(a admission.Attributes) (err error) {
-
 	// prevent deletion of immortal namespaces
-	if a.GetOperation() == admission.Delete && a.GetKind() == "Namespace" && l.immortalNamespaces.Has(a.GetName()) {
-		return errors.NewForbidden(a.GetKind(), a.GetName(), fmt.Errorf("namespace can never be deleted"))
+	if a.GetOperation() == admission.Delete && a.GetKind() == api.Kind("Namespace") && l.immortalNamespaces.Has(a.GetName()) {
+		return errors.NewForbidden(a.GetResource(), a.GetName(), fmt.Errorf("this namespace may not be deleted"))
 	}
 
-	defaultVersion, kind, err := api.RESTMapper.VersionAndKindForResource(a.GetResource())
-	if err != nil {
-		return errors.NewInternalError(err)
-	}
-	mapping, err := api.RESTMapper.RESTMapping(kind, defaultVersion)
-	if err != nil {
-		return errors.NewInternalError(err)
-	}
-	if mapping.Scope.Name() != meta.RESTScopeNameNamespace {
+	// if we're here, then we've already passed authentication, so we're allowed to do what we're trying to do
+	// if we're here, then the API server has found a route, which means that if we have a non-empty namespace
+	// its a namespaced resource.
+	if len(a.GetNamespace()) == 0 || a.GetKind() == api.Kind("Namespace") {
+		// if a namespace is deleted, we want to prevent all further creates into it
+		// while it is undergoing termination.  to reduce incidences where the cache
+		// is slow to update, we forcefully remove the namespace from our local cache.
+		// this will cause a live lookup of the namespace to get its latest state even
+		// before the watch notification is received.
+		if a.GetOperation() == admission.Delete {
+			l.store.Delete(&api.Namespace{
+				ObjectMeta: api.ObjectMeta{
+					Name: a.GetName(),
+				},
+			})
+		}
 		return nil
 	}
+
 	namespaceObj, exists, err := l.store.Get(&api.Namespace{
 		ObjectMeta: api.ObjectMeta{
 			Name:      a.GetNamespace(),
@@ -80,7 +85,7 @@ func (l *lifecycle) Admit(a admission.Attributes) (err error) {
 	// refuse to operate on non-existent namespaces
 	if !exists {
 		// in case of latency in our caches, make a call direct to storage to verify that it truly exists or not
-		namespaceObj, err = l.client.Namespaces().Get(a.GetNamespace())
+		namespaceObj, err = l.client.Core().Namespaces().Get(a.GetNamespace())
 		if err != nil {
 			if errors.IsNotFound(err) {
 				return err
@@ -104,15 +109,15 @@ func (l *lifecycle) Admit(a admission.Attributes) (err error) {
 }
 
 // NewLifecycle creates a new namespace lifecycle admission control handler
-func NewLifecycle(c client.Interface) admission.Interface {
+func NewLifecycle(c clientset.Interface) admission.Interface {
 	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
 	reflector := cache.NewReflector(
 		&cache.ListWatch{
-			ListFunc: func() (runtime.Object, error) {
-				return c.Namespaces().List(labels.Everything(), fields.Everything())
+			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
+				return c.Core().Namespaces().List(options)
 			},
-			WatchFunc: func(resourceVersion string) (watch.Interface, error) {
-				return c.Namespaces().Watch(labels.Everything(), fields.Everything(), resourceVersion)
+			WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
+				return c.Core().Namespaces().Watch(options)
 			},
 		},
 		&api.Namespace{},

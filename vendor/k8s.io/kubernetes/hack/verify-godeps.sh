@@ -56,11 +56,11 @@ trap cleanup EXIT
 # build the godep tool
 export GOPATH="${_tmpdir}"
 go get -u github.com/tools/godep 2>/dev/null
-go install github.com/tools/godep 2>/dev/null
 GODEP="${_tmpdir}/bin/godep"
-
-echo "Preloading aws-sdk-go godep - see https://github.com/kubernetes/kubernetes/issues/16238"
-preload-dep github.com/aws aws-sdk-go v0.9.9
+pushd "${GOPATH}/src/github.com/tools/godep" > /dev/null
+  git checkout v53
+  "${GODEP}" go install
+popd > /dev/null
 
 # fill out that nice clean place with the kube godeps
 echo "Starting to download all kubernetes godeps. This takes a while"
@@ -96,7 +96,7 @@ fi
 # is an intentionally broken symlink. Linux can use --no-dereference. OS X cannot.
 # So we --exclude='symlink' so diff -r doesn't die following a bad symlink.
 if ! _out="$(diff -Naupr --exclude='symlink' ${KUBE_ROOT}/Godeps/_workspace/src ${_kubetmp}/Godeps/_workspace/src)"; then
-  echo "Your godeps changes are not reproducable"
+  echo "Your godeps changes are not reproducible"
   echo "${_out}"
   exit 1
 fi

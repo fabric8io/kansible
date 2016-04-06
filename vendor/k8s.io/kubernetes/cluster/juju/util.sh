@@ -59,7 +59,7 @@ function detect-master() {
     export KUBE_SERVER=http://${KUBE_MASTER_IP}:8080
 }
 
-function detect-minions() {
+function detect-nodes() {
     # Run the Juju command that gets the minion private IP addresses.
     local ipoutput
     ipoutput=$(juju run --service kubernetes "unit-get private-address" --format=json)
@@ -69,9 +69,9 @@ function detect-minions() {
     # ]
 
     # Strip out the IP addresses
-    export KUBE_MINION_IP_ADDRESSES=($(${JUJU_PATH}/return-node-ips.py "${ipoutput}"))
-    # echo "Kubernetes minions: " ${KUBE_MINION_IP_ADDRESSES[@]} 1>&2
-    export NUM_MINIONS=${#KUBE_MINION_IP_ADDRESSES[@]}
+    export KUBE_NODE_IP_ADDRESSES=($(${JUJU_PATH}/return-node-ips.py "${ipoutput}"))
+    # echo "Kubernetes minions: " ${KUBE_NODE_IP_ADDRESSES[@]} 1>&2
+    export NUM_NODES=${#KUBE_NODE_IP_ADDRESSES[@]}
 }
 
 function get-password() {
@@ -97,7 +97,7 @@ function kube-up() {
     # Sleep due to juju bug http://pad.lv/1432759
     sleep-status
     detect-master
-    detect-minions
+    detect-nodes
 
     local prefix=$RANDOM
     export KUBE_CERT="/tmp/${prefix}-kubecfg.crt"
@@ -128,7 +128,7 @@ function kube-down() {
 }
 
 function prepare-e2e() {
-  echo "prepare-e2e() The Juju provider does not need any preperations for e2e." 1>&2
+  echo "prepare-e2e() The Juju provider does not need any preparations for e2e." 1>&2
 }
 
 function sleep-status() {
@@ -165,9 +165,9 @@ function test-build-release {
 }
 
 # Execute prior to running tests to initialize required structure. This is
-# called from hack/e2e.go only when running -up (it is run after kube-up).
+# called from hack/e2e.go only when running -up.
 function test-setup {
-    echo "test-setup() " 1>&2
+  "${KUBE_ROOT}/cluster/kube-up.sh"
 }
 
 # Execute after running tests to perform any required clean-up. This is called

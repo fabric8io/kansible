@@ -24,6 +24,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	log "github.com/golang/glog"
 	"github.com/stretchr/testify/assert"
@@ -76,7 +77,7 @@ func newFakeProcess() *fakeProcess {
 func TestBadLogger(t *testing.T) {
 	err := errors.New("qux")
 	fp := newFakeProcess()
-	tt := New("foo", "bar", nil, nil, func() io.WriteCloser {
+	tt := New("foo", "bar", nil, func() io.WriteCloser {
 		defer func() {
 			fp.pid = 123   // sanity check
 			fp.Kill(false) // this causes Wait() to return
@@ -125,7 +126,7 @@ func TestMergeOutput(t *testing.T) {
 	tasksDone.Add(2)
 	tasksStarted.Add(2)
 
-	t1 := New("foo", "", nil, nil, devNull)
+	t1 := New("foo", "", nil, devNull)
 	t1exited := make(chan struct{})
 	t1.RestartDelay = 0 // don't slow the test down for no good reason
 	t1.Finished = func(ok bool) bool {
@@ -144,7 +145,7 @@ func TestMergeOutput(t *testing.T) {
 		return taskRunning
 	})
 
-	t2 := New("bar", "", nil, nil, devNull)
+	t2 := New("bar", "", nil, devNull)
 	t2exited := make(chan struct{})
 	t2.RestartDelay = 0 // don't slow the test down for no good reason
 	t2.Finished = func(ok bool) bool {
@@ -222,15 +223,28 @@ func TestMergeOutput(t *testing.T) {
 	<-te.Done() // wait for the merge to complete
 }
 
+type fakeTimer struct {
+	ch chan time.Time
+}
+
+func (t *fakeTimer) set(d time.Duration)     {}
+func (t *fakeTimer) discard()                {}
+func (t *fakeTimer) await() <-chan time.Time { return t.ch }
+func (t *fakeTimer) expire()                 { t.ch = make(chan time.Time); close(t.ch) }
+func (t *fakeTimer) reset()                  { t.ch = nil }
+
 func TestAfterDeath(t *testing.T) {
 	// test kill escalation since that's not covered by other unit tests
-	t1 := New("foo", "", nil, nil, devNull)
+	t1 := New("foo", "", nil, devNull)
 	kills := 0
 	waitCh := make(chan *Completion, 1)
+	timer := &fakeTimer{}
+	timer.expire()
 	t1.killFunc = func(force bool) (int, error) {
 		// > 0 is intentional, multiple calls to close() should panic
 		if kills > 0 {
 			assert.True(t, force)
+			timer.reset() // don't want to race w/ waitCh
 			waitCh <- &Completion{name: t1.name, code: 123}
 			close(waitCh)
 		} else {
@@ -239,7 +253,7 @@ func TestAfterDeath(t *testing.T) {
 		kills++
 		return 0, nil
 	}
-	wr := t1.awaitDeath(0, waitCh)
+	wr := t1.awaitDeath(timer, 0, waitCh)
 	assert.Equal(t, "foo", wr.name)
 	assert.Equal(t, 123, wr.code)
 	assert.NoError(t, wr.err)
@@ -252,7 +266,9 @@ func TestAfterDeath(t *testing.T) {
 		t.Fatalf("should not attempt to kill a task that has already reported completion")
 		return 0, nil
 	}
-	wr = t1.awaitDeath(0, waitCh)
+
+	timer.reset() // don't race w/ waitCh
+	wr = t1.awaitDeath(timer, 0, waitCh)
 	assert.Equal(t, 456, wr.code)
 	assert.NoError(t, wr.err)
 
@@ -270,7 +286,8 @@ func TestAfterDeath(t *testing.T) {
 		kills++
 		return 0, nil
 	}
-	wr = t1.awaitDeath(0, nil)
+	timer.expire()
+	wr = t1.awaitDeath(timer, 0, nil)
 	assert.Equal(t, "foo", wr.name)
 	assert.Error(t, wr.err)
 
@@ -287,7 +304,8 @@ func TestAfterDeath(t *testing.T) {
 		kills++
 		return 0, killFailed
 	}
-	wr = t1.awaitDeath(0, nil)
+	timer.expire()
+	wr = t1.awaitDeath(timer, 0, nil)
 	assert.Equal(t, "foo", wr.name)
 	assert.Error(t, wr.err)
 }

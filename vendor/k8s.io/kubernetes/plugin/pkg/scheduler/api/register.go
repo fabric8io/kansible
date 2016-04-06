@@ -17,16 +17,24 @@ limitations under the License.
 package api
 
 import (
+	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/runtime"
 )
 
 // Scheme is the default instance of runtime.Scheme to which types in the Kubernetes API are already registered.
 var Scheme = runtime.NewScheme()
 
+// SchemeGroupVersion is group version used to register these objects
+// TODO this should be in the "scheduler" group
+var SchemeGroupVersion = unversioned.GroupVersion{Group: "", Version: runtime.APIVersionInternal}
+
 func init() {
-	Scheme.AddKnownTypes("",
+	if err := Scheme.AddIgnoredConversionType(&unversioned.TypeMeta{}, &unversioned.TypeMeta{}); err != nil {
+		panic(err)
+	}
+	Scheme.AddKnownTypes(SchemeGroupVersion,
 		&Policy{},
 	)
 }
 
-func (*Policy) IsAnAPIObject() {}
+func (obj *Policy) GetObjectKind() unversioned.ObjectKind { return &obj.TypeMeta }

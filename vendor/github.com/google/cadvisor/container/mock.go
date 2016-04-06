@@ -12,10 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build test
+
 package container
 
 import (
 	info "github.com/google/cadvisor/info/v1"
+
 	"github.com/stretchr/testify/mock"
 )
 
@@ -49,6 +52,10 @@ func (self *MockContainerHandler) ContainerReference() (info.ContainerReference,
 	args := self.Called()
 	return args.Get(0).(info.ContainerReference), args.Error(1)
 }
+
+func (self *MockContainerHandler) Start() {}
+
+func (self *MockContainerHandler) Cleanup() {}
 
 func (self *MockContainerHandler) GetSpec() (info.ContainerSpec, error) {
 	args := self.Called()

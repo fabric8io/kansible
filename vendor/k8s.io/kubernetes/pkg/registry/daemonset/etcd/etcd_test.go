@@ -20,18 +20,21 @@ import (
 	"testing"
 
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/apis/extensions"
 	"k8s.io/kubernetes/pkg/fields"
 	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/registrytest"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/tools"
+	etcdtesting "k8s.io/kubernetes/pkg/storage/etcd/testing"
 )
 
-func newStorage(t *testing.T) (*REST, *StatusREST, *tools.FakeEtcdClient) {
-	etcdStorage, fakeClient := registrytest.NewEtcdStorage(t, "extensions")
-	storage, statusStorage := NewREST(etcdStorage)
-	return storage, statusStorage, fakeClient
+func newStorage(t *testing.T) (*REST, *StatusREST, *etcdtesting.EtcdTestServer) {
+	etcdStorage, server := registrytest.NewEtcdStorage(t, extensions.GroupName)
+	restOptions := generic.RESTOptions{etcdStorage, generic.UndecoratedStorage, 1}
+	daemonSetStorage, statusStorage := NewREST(restOptions)
+	return daemonSetStorage, statusStorage, server
 }
 
 func newValidDaemonSet() *extensions.DaemonSet {
@@ -41,8 +44,8 @@ func newValidDaemonSet() *extensions.DaemonSet {
 			Namespace: api.NamespaceDefault,
 		},
 		Spec: extensions.DaemonSetSpec{
-			Selector: map[string]string{"a": "b"},
-			Template: &api.PodTemplateSpec{
+			Selector: &unversioned.LabelSelector{MatchLabels: map[string]string{"a": "b"}},
+			Template: api.PodTemplateSpec{
 				ObjectMeta: api.ObjectMeta{
 					Labels: map[string]string{"a": "b"},
 				},
@@ -65,8 +68,9 @@ func newValidDaemonSet() *extensions.DaemonSet {
 var validDaemonSet = newValidDaemonSet()
 
 func TestCreate(t *testing.T) {
-	storage, _, fakeClient := newStorage(t)
-	test := registrytest.New(t, fakeClient, storage.Etcd)
+	storage, _, server := newStorage(t)
+	defer server.Terminate(t)
+	test := registrytest.New(t, storage.Etcd)
 	ds := newValidDaemonSet()
 	ds.ObjectMeta = api.ObjectMeta{}
 	test.TestCreate(
@@ -75,7 +79,14 @@ func TestCreate(t *testing.T) {
 		// invalid (invalid selector)
 		&extensions.DaemonSet{
 			Spec: extensions.DaemonSetSpec{
-				Selector: map[string]string{},
+				Selector: &unversioned.LabelSelector{MatchLabels: map[string]string{}},
+				Template: validDaemonSet.Spec.Template,
+			},
+		},
+		// invalid update strategy
+		&extensions.DaemonSet{
+			Spec: extensions.DaemonSetSpec{
+				Selector: validDaemonSet.Spec.Selector,
 				Template: validDaemonSet.Spec.Template,
 			},
 		},
@@ -83,8 +94,9 @@ func TestCreate(t *testing.T) {
 }
 
 func TestUpdate(t *testing.T) {
-	storage, _, fakeClient := newStorage(t)
-	test := registrytest.New(t, fakeClient, storage.Etcd)
+	storage, _, server := newStorage(t)
+	defer server.Terminate(t)
+	test := registrytest.New(t, storage.Etcd)
 	test.TestUpdate(
 		// valid
 		newValidDaemonSet(),
@@ -92,6 +104,7 @@ func TestUpdate(t *testing.T) {
 		func(obj runtime.Object) runtime.Object {
 			object := obj.(*extensions.DaemonSet)
 			object.Spec.Template.Spec.NodeSelector = map[string]string{"c": "d"}
+			object.Spec.Template.Spec.DNSPolicy = api.DNSDefault
 			return object
 		},
 		// invalid updateFunc
@@ -110,35 +123,34 @@ func TestUpdate(t *testing.T) {
 			object.Spec.Template.Spec.RestartPolicy = api.RestartPolicyOnFailure
 			return object
 		},
-		func(obj runtime.Object) runtime.Object {
-			object := obj.(*extensions.DaemonSet)
-			object.Spec.Selector = map[string]string{}
-			return object
-		},
 	)
 }
 
 func TestDelete(t *testing.T) {
-	storage, _, fakeClient := newStorage(t)
-	test := registrytest.New(t, fakeClient, storage.Etcd)
+	storage, _, server := newStorage(t)
+	defer server.Terminate(t)
+	test := registrytest.New(t, storage.Etcd)
 	test.TestDelete(newValidDaemonSet())
 }
 
 func TestGet(t *testing.T) {
-	storage, _, fakeClient := newStorage(t)
-	test := registrytest.New(t, fakeClient, storage.Etcd)
+	storage, _, server := newStorage(t)
+	defer server.Terminate(t)
+	test := registrytest.New(t, storage.Etcd)
 	test.TestGet(newValidDaemonSet())
 }
 
 func TestList(t *testing.T) {
-	storage, _, fakeClient := newStorage(t)
-	test := registrytest.New(t, fakeClient, storage.Etcd)
+	storage, _, server := newStorage(t)
+	defer server.Terminate(t)
+	test := registrytest.New(t, storage.Etcd)
 	test.TestList(newValidDaemonSet())
 }
 
 func TestWatch(t *testing.T) {
-	storage, _, fakeClient := newStorage(t)
-	test := registrytest.New(t, fakeClient, storage.Etcd)
+	storage, _, server := newStorage(t)
+	defer server.Terminate(t)
+	test := registrytest.New(t, storage.Etcd)
 	test.TestWatch(
 		validDaemonSet,
 		// matching labels

@@ -24,16 +24,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/libcontainer/cgroups"
-	cgroup_fs "github.com/docker/libcontainer/cgroups/fs"
-	"github.com/docker/libcontainer/configs"
-	"github.com/golang/glog"
 	"github.com/google/cadvisor/container"
 	"github.com/google/cadvisor/container/libcontainer"
 	"github.com/google/cadvisor/fs"
 	info "github.com/google/cadvisor/info/v1"
 	"github.com/google/cadvisor/utils"
 	"github.com/google/cadvisor/utils/machine"
+
+	"github.com/golang/glog"
+	"github.com/opencontainers/runc/libcontainer/cgroups"
+	cgroupfs "github.com/opencontainers/runc/libcontainer/cgroups/fs"
+	"github.com/opencontainers/runc/libcontainer/configs"
 	"golang.org/x/exp/inotify"
 )
 
@@ -56,16 +57,22 @@ type rawContainerHandler struct {
 	// Manager of this container's cgroups.
 	cgroupManager cgroups.Manager
 
-	// Whether this container has network isolation enabled.
-	hasNetwork bool
-
 	fsInfo         fs.FsInfo
 	externalMounts []mount
 
 	rootFs string
+
+	// Metrics to be ignored.
+	ignoreMetrics container.MetricSet
+
+	pid int
 }
 
-func newRawContainerHandler(name string, cgroupSubsystems *libcontainer.CgroupSubsystems, machineInfoFactory info.MachineInfoFactory, fsInfo fs.FsInfo, watcher *InotifyWatcher, rootFs string) (container.ContainerHandler, error) {
+func isRootCgroup(name string) bool {
+	return name == "/"
+}
+
+func newRawContainerHandler(name string, cgroupSubsystems *libcontainer.CgroupSubsystems, machineInfoFactory info.MachineInfoFactory, fsInfo fs.FsInfo, watcher *InotifyWatcher, rootFs string, ignoreMetrics container.MetricSet) (container.ContainerHandler, error) {
 	// Create the cgroup paths.
 	cgroupPaths := make(map[string]string, len(cgroupSubsystems.MountPoints))
 	for key, val := range cgroupSubsystems.MountPoints {
@@ -78,25 +85,24 @@ func newRawContainerHandler(name string, cgroupSubsystems *libcontainer.CgroupSu
 	}
 
 	// Generate the equivalent cgroup manager for this container.
-	cgroupManager := &cgroup_fs.Manager{
+	cgroupManager := &cgroupfs.Manager{
 		Cgroups: &configs.Cgroup{
 			Name: name,
 		},
 		Paths: cgroupPaths,
 	}
 
-	hasNetwork := false
 	var externalMounts []mount
 	for _, container := range cHints.AllHosts {
 		if name == container.FullName {
-			/*libcontainerState.NetworkState = network.NetworkState{
-				VethHost:  container.NetworkInterface.VethHost,
-				VethChild: container.NetworkInterface.VethChild,
-			}
-			hasNetwork = true*/
 			externalMounts = container.Mounts
 			break
 		}
+	}
+
+	pid := 0
+	if isRootCgroup(name) {
+		pid = 1
 	}
 
 	return &rawContainerHandler{
@@ -107,10 +113,11 @@ func newRawContainerHandler(name string, cgroupSubsystems *libcontainer.CgroupSu
 		cgroupPaths:        cgroupPaths,
 		cgroupManager:      cgroupManager,
 		fsInfo:             fsInfo,
-		hasNetwork:         hasNetwork,
 		externalMounts:     externalMounts,
 		watcher:            watcher,
 		rootFs:             rootFs,
+		ignoreMetrics:      ignoreMetrics,
+		pid:                pid,
 	}, nil
 }
 
@@ -138,7 +145,7 @@ func readString(dirpath string, file string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func readInt64(dirpath string, file string) uint64 {
+func readUInt64(dirpath string, file string) uint64 {
 	out := readString(dirpath, file)
 	if out == "" {
 		return 0
@@ -155,7 +162,7 @@ func readInt64(dirpath string, file string) uint64 {
 
 func (self *rawContainerHandler) GetRootNetworkDevices() ([]info.NetInfo, error) {
 	nd := []info.NetInfo{}
-	if self.name == "/" {
+	if isRootCgroup(self.name) {
 		mi, err := self.machineInfoFactory.GetMachineInfo()
 		if err != nil {
 			return nd, err
@@ -164,6 +171,12 @@ func (self *rawContainerHandler) GetRootNetworkDevices() ([]info.NetInfo, error)
 	}
 	return nd, nil
 }
+
+// Nothing to start up.
+func (self *rawContainerHandler) Start() {}
+
+// Nothing to clean up.
+func (self *rawContainerHandler) Cleanup() {}
 
 func (self *rawContainerHandler) GetSpec() (info.ContainerSpec, error) {
 	var spec info.ContainerSpec
@@ -199,7 +212,17 @@ func (self *rawContainerHandler) GetSpec() (info.ContainerSpec, error) {
 	if ok {
 		if utils.FileExists(cpuRoot) {
 			spec.HasCpu = true
-			spec.Cpu.Limit = readInt64(cpuRoot, "cpu.shares")
+			spec.Cpu.Limit = readUInt64(cpuRoot, "cpu.shares")
+			spec.Cpu.Period = readUInt64(cpuRoot, "cpu.cfs_period_us")
+			quota := readString(cpuRoot, "cpu.cfs_quota_us")
+
+			if quota != "" && quota != "-1" {
+				val, err := strconv.ParseUint(quota, 10, 64)
+				if err != nil {
+					glog.Errorf("raw driver: Failed to parse CPUQuota from %q: %s", path.Join(cpuRoot, "cpu.cfs_quota_us"), err)
+				}
+				spec.Cpu.Quota = val
+			}
 		}
 	}
 
@@ -238,8 +261,8 @@ func (self *rawContainerHandler) GetSpec() (info.ContainerSpec, error) {
 		if ok {
 			if utils.FileExists(memoryRoot) {
 				spec.HasMemory = true
-				spec.Memory.Limit = readInt64(memoryRoot, "memory.limit_in_bytes")
-				spec.Memory.SwapLimit = readInt64(memoryRoot, "memory.memsw.limit_in_bytes")
+				spec.Memory.Limit = readUInt64(memoryRoot, "memory.limit_in_bytes")
+				spec.Memory.SwapLimit = readUInt64(memoryRoot, "memory.memsw.limit_in_bytes")
 			}
 		}
 	}
@@ -248,9 +271,6 @@ func (self *rawContainerHandler) GetSpec() (info.ContainerSpec, error) {
 	if self.name == "/" || self.externalMounts != nil {
 		spec.HasFilesystem = true
 	}
-
-	//Network
-	spec.HasNetwork = self.hasNetwork
 
 	// DiskIo.
 	if blkioRoot, ok := self.cgroupPaths["blkio"]; ok && utils.FileExists(blkioRoot) {
@@ -270,7 +290,7 @@ func (self *rawContainerHandler) GetSpec() (info.ContainerSpec, error) {
 
 func (self *rawContainerHandler) getFsStats(stats *info.ContainerStats) error {
 	// Get Filesystem information only for the root cgroup.
-	if self.name == "/" {
+	if isRootCgroup(self.name) {
 		filesystems, err := self.fsInfo.GetGlobalFsInfo()
 		if err != nil {
 			return err
@@ -279,9 +299,11 @@ func (self *rawContainerHandler) getFsStats(stats *info.ContainerStats) error {
 			stats.Filesystem = append(stats.Filesystem,
 				info.FsStats{
 					Device:          fs.Device,
+					Type:            fs.Type.String(),
 					Limit:           fs.Capacity,
 					Usage:           fs.Capacity - fs.Free,
 					Available:       fs.Available,
+					InodesFree:      fs.InodesFree,
 					ReadsCompleted:  fs.DiskStats.ReadsCompleted,
 					ReadsMerged:     fs.DiskStats.ReadsMerged,
 					SectorsRead:     fs.DiskStats.SectorsRead,
@@ -309,8 +331,10 @@ func (self *rawContainerHandler) getFsStats(stats *info.ContainerStats) error {
 			stats.Filesystem = append(stats.Filesystem,
 				info.FsStats{
 					Device:          fs.Device,
+					Type:            fs.Type.String(),
 					Limit:           fs.Capacity,
 					Usage:           fs.Capacity - fs.Free,
+					InodesFree:      fs.InodesFree,
 					ReadsCompleted:  fs.DiskStats.ReadsCompleted,
 					ReadsMerged:     fs.DiskStats.ReadsMerged,
 					SectorsRead:     fs.DiskStats.SectorsRead,
@@ -329,7 +353,7 @@ func (self *rawContainerHandler) getFsStats(stats *info.ContainerStats) error {
 }
 
 func (self *rawContainerHandler) GetStats() (*info.ContainerStats, error) {
-	stats, err := libcontainer.GetStats(self.cgroupManager, self.rootFs, os.Getpid())
+	stats, err := libcontainer.GetStats(self.cgroupManager, self.rootFs, self.pid, self.ignoreMetrics)
 	if err != nil {
 		return stats, err
 	}

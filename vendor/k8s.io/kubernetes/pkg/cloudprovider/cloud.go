@@ -23,12 +23,13 @@ import (
 	"strings"
 
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/types"
 )
 
 // Interface is an abstract, pluggable interface for cloud providers.
 type Interface interface {
-	// TCPLoadBalancer returns a balancer interface. Also returns true if the interface is supported, false otherwise.
-	TCPLoadBalancer() (TCPLoadBalancer, bool)
+	// LoadBalancer returns a balancer interface. Also returns true if the interface is supported, false otherwise.
+	LoadBalancer() (LoadBalancer, bool)
 	// Instances returns an instances interface. Also returns true if the interface is supported, false otherwise.
 	Instances() (Instances, bool)
 	// Zones returns a zones interface. Also returns true if the interface is supported, false otherwise.
@@ -45,7 +46,7 @@ type Interface interface {
 
 // Clusters is an abstract, pluggable interface for clusters of containers.
 type Clusters interface {
-	// List lists the names of the available clusters.
+	// ListClusters lists the names of the available clusters.
 	ListClusters() ([]string, error)
 	// Master gets back the address (either DNS name or IP address) of the master node for the cluster.
 	Master(clusterName string) (string, error)
@@ -76,23 +77,23 @@ func GetInstanceProviderID(cloud Interface, nodeName string) (string, error) {
 	return cloud.ProviderName() + "://" + instanceID, nil
 }
 
-// TCPLoadBalancer is an abstract, pluggable interface for TCP load balancers.
-type TCPLoadBalancer interface {
+// LoadBalancer is an abstract, pluggable interface for load balancers.
+type LoadBalancer interface {
 	// TODO: Break this up into different interfaces (LB, etc) when we have more than one type of service
-	// GetTCPLoadBalancer returns whether the specified load balancer exists, and
+	// GetLoadBalancer returns whether the specified load balancer exists, and
 	// if so, what its status is.
-	GetTCPLoadBalancer(name, region string) (status *api.LoadBalancerStatus, exists bool, err error)
-	// EnsureTCPLoadBalancer creates a new tcp load balancer, or updates an existing one. Returns the status of the balancer
-	EnsureTCPLoadBalancer(name, region string, loadBalancerIP net.IP, ports []*api.ServicePort, hosts []string, affinityType api.ServiceAffinity) (*api.LoadBalancerStatus, error)
-	// UpdateTCPLoadBalancer updates hosts under the specified load balancer.
-	UpdateTCPLoadBalancer(name, region string, hosts []string) error
-	// EnsureTCPLoadBalancerDeleted deletes the specified load balancer if it
+	GetLoadBalancer(name, region string) (status *api.LoadBalancerStatus, exists bool, err error)
+	// EnsureLoadBalancer creates a new load balancer 'name', or updates the existing one. Returns the status of the balancer
+	EnsureLoadBalancer(name, region string, loadBalancerIP net.IP, ports []*api.ServicePort, hosts []string, serviceName types.NamespacedName, affinityType api.ServiceAffinity, annotations map[string]string) (*api.LoadBalancerStatus, error)
+	// UpdateLoadBalancer updates hosts under the specified load balancer.
+	UpdateLoadBalancer(name, region string, hosts []string) error
+	// EnsureLoadBalancerDeleted deletes the specified load balancer if it
 	// exists, returning nil if the load balancer specified either didn't exist or
 	// was successfully deleted.
 	// This construction is useful because many cloud providers' load balancers
 	// have multiple underlying components, meaning a Get could say that the LB
 	// doesn't exist even if some part of it is still laying around.
-	EnsureTCPLoadBalancerDeleted(name, region string) error
+	EnsureLoadBalancerDeleted(name, region string) error
 }
 
 // Instances is an abstract, pluggable interface for sets of instances.
@@ -107,12 +108,15 @@ type Instances interface {
 	// InstanceID returns the cloud provider ID of the specified instance.
 	// Note that if the instance does not exist or is no longer running, we must return ("", cloudprovider.InstanceNotFound)
 	InstanceID(name string) (string, error)
+	// InstanceType returns the type of the specified instance.
+	// Note that if the instance does not exist or is no longer running, we must return ("", cloudprovider.InstanceNotFound)
+	InstanceType(name string) (string, error)
 	// List lists instances that match 'filter' which is a regular expression which must match the entire instance name (fqdn)
 	List(filter string) ([]string, error)
 	// AddSSHKeyToAllInstances adds an SSH public key as a legal identity for all instances
 	// expected format for the key is standard ssh-keygen format: <protocol> <blob>
 	AddSSHKeyToAllInstances(user string, keyData []byte) error
-	// Returns the name of the node we are currently running on
+	// CurrentNodeName returns the name of the node we are currently running on
 	// On most clouds (e.g. GCE) this is the hostname, so we provide the hostname
 	CurrentNodeName(hostname string) (string, error)
 }
@@ -125,20 +129,20 @@ type Route struct {
 	// TargetInstance is the name of the instance as specified in routing rules
 	// for the cloud-provider (in gce: the Instance Name).
 	TargetInstance string
-	// Destination CIDR is the CIDR format IP range that this routing rule
+	// DestinationCIDR is the CIDR format IP range that this routing rule
 	// applies to.
 	DestinationCIDR string
 }
 
 // Routes is an abstract, pluggable interface for advanced routing rules.
 type Routes interface {
-	// List all managed routes that belong to the specified clusterName
+	// ListRoutes lists all managed routes that belong to the specified clusterName
 	ListRoutes(clusterName string) ([]*Route, error)
-	// Create the described managed route
+	// CreateRoute creates the described managed route
 	// route.Name will be ignored, although the cloud-provider may use nameHint
 	// to create a more user-meaningful name.
 	CreateRoute(clusterName string, nameHint string, route *Route) error
-	// Delete the specified managed route
+	// DeleteRoute deletes the specified managed route
 	// Route should be as returned by ListRoutes
 	DeleteRoute(clusterName string, route *Route) error
 }

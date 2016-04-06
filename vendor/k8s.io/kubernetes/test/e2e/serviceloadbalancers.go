@@ -24,8 +24,8 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/fields"
 	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/util/wait"
 	utilyaml "k8s.io/kubernetes/pkg/util/yaml"
 
@@ -38,7 +38,7 @@ func getLoadBalancerControllers(repoRoot string, client *client.Client) []LBCTes
 	return []LBCTester{
 		&haproxyControllerTester{
 			name:   "haproxy",
-			cfg:    filepath.Join(repoRoot, "test", "e2e", "testing-manifests", "haproxyrc.yaml"),
+			cfg:    filepath.Join(repoRoot, "test", "e2e", "testing-manifests", "serviceloadbalancer", "haproxyrc.yaml"),
 			client: client,
 		},
 	}
@@ -49,8 +49,8 @@ func getIngManagers(repoRoot string, client *client.Client) []*ingManager {
 	return []*ingManager{
 		{
 			name:        "netexec",
-			rcCfgPaths:  []string{filepath.Join(repoRoot, "test", "e2e", "testing-manifests", "netexecrc.yaml")},
-			svcCfgPaths: []string{filepath.Join(repoRoot, "test", "e2e", "testing-manifests", "netexecsvc.yaml")},
+			rcCfgPaths:  []string{filepath.Join(repoRoot, "test", "e2e", "testing-manifests", "serviceloadbalancer", "netexecrc.yaml")},
+			svcCfgPaths: []string{filepath.Join(repoRoot, "test", "e2e", "testing-manifests", "serviceloadbalancer", "netexecsvc.yaml")},
 			svcNames:    []string{},
 			client:      client,
 		},
@@ -69,7 +69,7 @@ type LBCTester interface {
 	getName() string
 }
 
-// haproxyControllerTester implementes LBCTester for bare metal haproxy LBs.
+// haproxyControllerTester implements LBCTester for bare metal haproxy LBs.
 type haproxyControllerTester struct {
 	client      *client.Client
 	cfg         string
@@ -88,7 +88,7 @@ func (h *haproxyControllerTester) start(namespace string) (err error) {
 	// Create a replication controller with the given configuration.
 	rc := rcFromManifest(h.cfg)
 	rc.Namespace = namespace
-	rc.Spec.Template.Labels["rcName"] = rc.Name
+	rc.Spec.Template.Labels["name"] = rc.Name
 
 	// Add the --namespace arg.
 	// TODO: Remove this when we have proper namespace support.
@@ -102,7 +102,7 @@ func (h *haproxyControllerTester) start(namespace string) (err error) {
 	if err != nil {
 		return
 	}
-	if err = waitForRCPodsRunning(h.client, namespace, h.rcName); err != nil {
+	if err = waitForRCPodsRunning(h.client, namespace, rc.Name); err != nil {
 		return
 	}
 	h.rcName = rc.Name
@@ -110,9 +110,9 @@ func (h *haproxyControllerTester) start(namespace string) (err error) {
 
 	// Find the pods of the rc we just created.
 	labelSelector := labels.SelectorFromSet(
-		labels.Set(map[string]string{"rcName": h.rcName}))
-	pods, err := h.client.Pods(h.rcNamespace).List(
-		labelSelector, fields.Everything())
+		labels.Set(map[string]string{"name": h.rcName}))
+	options := api.ListOptions{LabelSelector: labelSelector}
+	pods, err := h.client.Pods(h.rcNamespace).List(options)
 	if err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ func (s *ingManager) start(namespace string) (err error) {
 	for _, rcPath := range s.rcCfgPaths {
 		rc := rcFromManifest(rcPath)
 		rc.Namespace = namespace
-		rc.Spec.Template.Labels["rcName"] = rc.Name
+		rc.Spec.Template.Labels["name"] = rc.Name
 		rc, err = s.client.ReplicationControllers(rc.Namespace).Create(rc)
 		if err != nil {
 			return
@@ -174,7 +174,7 @@ func (s *ingManager) start(namespace string) (err error) {
 		}
 	}
 	// Create services.
-	// Note that it's upto the caller to make sure the service actually matches
+	// Note that it's up to the caller to make sure the service actually matches
 	// the pods of the rc.
 	for _, svcPath := range s.svcCfgPaths {
 		svc := svcFromManifest(svcPath)
@@ -204,23 +204,18 @@ func (s *ingManager) test(path string) error {
 	})
 }
 
-var _ = Describe("ServiceLoadBalancer", func() {
+var _ = Describe("ServiceLoadBalancer [Feature:ServiceLoadBalancer]", func() {
 	// These variables are initialized after framework's beforeEach.
 	var ns string
 	var repoRoot string
 	var client *client.Client
 
-	framework := Framework{BaseName: "servicelb"}
+	framework := NewDefaultFramework("servicelb")
 
 	BeforeEach(func() {
-		framework.beforeEach()
 		client = framework.Client
 		ns = framework.Namespace.Name
 		repoRoot = testContext.RepoRoot
-	})
-
-	AfterEach(func() {
-		framework.afterEach()
 	})
 
 	It("should support simple GET on Ingress ips", func() {
@@ -278,7 +273,7 @@ func rcFromManifest(fileName string) *api.ReplicationController {
 	json, err := utilyaml.ToJSON(data)
 	Expect(err).NotTo(HaveOccurred())
 
-	Expect(api.Scheme.DecodeInto(json, &controller)).NotTo(HaveOccurred())
+	Expect(runtime.DecodeInto(api.Codecs.UniversalDecoder(), json, &controller)).NotTo(HaveOccurred())
 	return &controller
 }
 
@@ -292,6 +287,6 @@ func svcFromManifest(fileName string) *api.Service {
 	json, err := utilyaml.ToJSON(data)
 	Expect(err).NotTo(HaveOccurred())
 
-	Expect(api.Scheme.DecodeInto(json, &svc)).NotTo(HaveOccurred())
+	Expect(runtime.DecodeInto(api.Codecs.UniversalDecoder(), json, &svc)).NotTo(HaveOccurred())
 	return &svc
 }

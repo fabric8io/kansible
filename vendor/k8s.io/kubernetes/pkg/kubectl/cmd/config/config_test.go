@@ -27,7 +27,6 @@ import (
 	"testing"
 
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/testapi"
 	"k8s.io/kubernetes/pkg/client/unversioned/clientcmd"
 	clientcmdapi "k8s.io/kubernetes/pkg/client/unversioned/clientcmd/api"
 	"k8s.io/kubernetes/pkg/util"
@@ -73,6 +72,17 @@ func ExampleView() {
 	// - name: red-user
 	//   user:
 	//     token: red-token
+}
+
+func TestCurrentContext(t *testing.T) {
+	startingConfig := newRedFederalCowHammerConfig()
+	test := configCommandTest{
+		args:            []string{"current-context"},
+		startingConfig:  startingConfig,
+		expectedConfig:  startingConfig,
+		expectedOutputs: []string{startingConfig.CurrentContext},
+	}
+	test.run(t)
 }
 
 func TestSetCurrentContext(t *testing.T) {
@@ -134,13 +144,9 @@ func TestSetWithPathPrefixIntoExistingStruct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	expectedHost := "http://cow.org:8080"
+	expectedHost := "http://cow.org:8080/foo/baz"
 	if expectedHost != dcc.Host {
 		t.Fatalf("expected client.Config.Host = %q instead of %q", expectedHost, dcc.Host)
-	}
-	expectedPrefix := "/foo/baz"
-	if expectedPrefix != dcc.Prefix {
-		t.Fatalf("expected client.Config.Prefix = %q instead of %q", expectedPrefix, dcc.Prefix)
 	}
 }
 
@@ -577,13 +583,12 @@ func TestNewEmptyCluster(t *testing.T) {
 func TestAdditionalCluster(t *testing.T) {
 	expectedConfig := newRedFederalCowHammerConfig()
 	cluster := clientcmdapi.NewCluster()
-	cluster.APIVersion = testapi.Default.Version()
 	cluster.CertificateAuthority = "/ca-location"
 	cluster.InsecureSkipTLSVerify = false
 	cluster.Server = "serverlocation"
 	expectedConfig.Clusters["different-cluster"] = cluster
 	test := configCommandTest{
-		args:           []string{"set-cluster", "different-cluster", "--" + clientcmd.FlagAPIServer + "=serverlocation", "--" + clientcmd.FlagInsecure + "=false", "--" + clientcmd.FlagCAFile + "=/ca-location", "--" + clientcmd.FlagAPIVersion + "=" + testapi.Default.Version()},
+		args:           []string{"set-cluster", "different-cluster", "--" + clientcmd.FlagAPIServer + "=serverlocation", "--" + clientcmd.FlagInsecure + "=false", "--" + clientcmd.FlagCAFile + "=/ca-location"},
 		startingConfig: newRedFederalCowHammerConfig(),
 		expectedConfig: expectedConfig,
 	}

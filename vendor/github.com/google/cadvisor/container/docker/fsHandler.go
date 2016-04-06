@@ -19,64 +19,83 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/glog"
 	"github.com/google/cadvisor/fs"
+
+	"github.com/golang/glog"
 )
 
 type fsHandler interface {
 	start()
-	usage() uint64
+	usage() (uint64, uint64)
 	stop()
 }
 
 type realFsHandler struct {
 	sync.RWMutex
-	lastUpdate  time.Time
-	usageBytes  uint64
-	period      time.Duration
-	storageDirs []string
-	fsInfo      fs.FsInfo
+	lastUpdate     time.Time
+	usageBytes     uint64
+	baseUsageBytes uint64
+	period         time.Duration
+	minPeriod      time.Duration
+	rootfs         string
+	extraDir       string
+	fsInfo         fs.FsInfo
 	// Tells the container to stop.
 	stopChan chan struct{}
 }
 
-const longDu = time.Second
+const (
+	longDu             = time.Second
+	duTimeout          = time.Minute
+	maxDuBackoffFactor = 20
+)
 
 var _ fsHandler = &realFsHandler{}
 
-func newFsHandler(period time.Duration, storageDirs []string, fsInfo fs.FsInfo) fsHandler {
+func newFsHandler(period time.Duration, rootfs, extraDir string, fsInfo fs.FsInfo) fsHandler {
 	return &realFsHandler{
-		lastUpdate:  time.Time{},
-		usageBytes:  0,
-		period:      period,
-		storageDirs: storageDirs,
-		fsInfo:      fsInfo,
-		stopChan:    make(chan struct{}, 1),
+		lastUpdate:     time.Time{},
+		usageBytes:     0,
+		baseUsageBytes: 0,
+		period:         period,
+		minPeriod:      period,
+		rootfs:         rootfs,
+		extraDir:       extraDir,
+		fsInfo:         fsInfo,
+		stopChan:       make(chan struct{}, 1),
 	}
-}
-
-func (fh *realFsHandler) needsUpdate() bool {
-	return time.Now().After(fh.lastUpdate.Add(fh.period))
 }
 
 func (fh *realFsHandler) update() error {
-	var usage uint64
-	for _, dir := range fh.storageDirs {
-		// TODO(Vishh): Add support for external mounts.
-		dirUsage, err := fh.fsInfo.GetDirUsage(dir)
+	var (
+		baseUsage, extraDirUsage uint64
+		err                      error
+	)
+	// TODO(vishh): Add support for external mounts.
+	if fh.rootfs != "" {
+		baseUsage, err = fh.fsInfo.GetDirUsage(fh.rootfs, duTimeout)
 		if err != nil {
 			return err
 		}
-		usage += dirUsage
 	}
+
+	if fh.extraDir != "" {
+		extraDirUsage, err = fh.fsInfo.GetDirUsage(fh.extraDir, duTimeout)
+		if err != nil {
+			return err
+		}
+	}
+
 	fh.Lock()
 	defer fh.Unlock()
 	fh.lastUpdate = time.Now()
-	fh.usageBytes = usage
+	fh.usageBytes = baseUsage + extraDirUsage
+	fh.baseUsageBytes = baseUsage
 	return nil
 }
 
 func (fh *realFsHandler) trackUsage() {
+	fh.update()
 	for {
 		select {
 		case <-fh.stopChan:
@@ -84,11 +103,17 @@ func (fh *realFsHandler) trackUsage() {
 		case <-time.After(fh.period):
 			start := time.Now()
 			if err := fh.update(); err != nil {
-				glog.V(2).Infof("failed to collect filesystem stats - %v", err)
+				glog.Errorf("failed to collect filesystem stats - %v", err)
+				fh.period = fh.period * 2
+				if fh.period > maxDuBackoffFactor*fh.minPeriod {
+					fh.period = maxDuBackoffFactor * fh.minPeriod
+				}
+			} else {
+				fh.period = fh.minPeriod
 			}
 			duration := time.Since(start)
 			if duration > longDu {
-				glog.V(3).Infof("`du` on following dirs took %v: %v", duration, fh.storageDirs)
+				glog.V(2).Infof("`du` on following dirs took %v: %v", duration, []string{fh.rootfs, fh.extraDir})
 			}
 		}
 	}
@@ -102,8 +127,8 @@ func (fh *realFsHandler) stop() {
 	close(fh.stopChan)
 }
 
-func (fh *realFsHandler) usage() uint64 {
+func (fh *realFsHandler) usage() (baseUsageBytes, totalUsageBytes uint64) {
 	fh.RLock()
 	defer fh.RUnlock()
-	return fh.usageBytes
+	return fh.baseUsageBytes, fh.usageBytes
 }

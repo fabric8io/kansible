@@ -23,7 +23,7 @@ import (
 const (
 	Guaranteed = "Guaranteed"
 	Burstable  = "Burstable"
-	BestEffort = "Best-Effort"
+	BestEffort = "BestEffort"
 )
 
 // isResourceGuaranteed returns true if the container's resource requirements are Guaranteed.
@@ -62,9 +62,18 @@ func GetQoS(container *api.Container) map[api.ResourceName]string {
 	return resourceToQoS
 }
 
-// allResources returns a set of resources the container has
+// supportedComputeResources is the list of supported compute resources
+var supportedComputeResources = []api.ResourceName{
+	api.ResourceCPU,
+	api.ResourceMemory,
+}
+
+// allResources returns a set of all possible resources whose mapped key value is true if present on the container
 func allResources(container *api.Container) map[api.ResourceName]bool {
 	resources := map[api.ResourceName]bool{}
+	for _, resource := range supportedComputeResources {
+		resources[resource] = false
+	}
 	for resource := range container.Resources.Requests {
 		resources[resource] = true
 	}

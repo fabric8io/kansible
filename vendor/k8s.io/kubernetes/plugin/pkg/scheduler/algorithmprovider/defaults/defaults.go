@@ -18,13 +18,37 @@ limitations under the License.
 package defaults
 
 import (
+	"os"
+	"strconv"
+
+	"k8s.io/kubernetes/pkg/cloudprovider/providers/aws"
 	"k8s.io/kubernetes/pkg/util/sets"
 	"k8s.io/kubernetes/plugin/pkg/scheduler"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm/predicates"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm/priorities"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/factory"
+
+	"github.com/golang/glog"
 )
+
+// GCE instances can have up to 16 PD volumes attached.
+const DefaultMaxGCEPDVolumes = 16
+
+// getMaxVols checks the max PD volumes environment variable, otherwise returning a default value
+func getMaxVols(defaultVal int) int {
+	if rawMaxVols := os.Getenv("KUBE_MAX_PD_VOLS"); rawMaxVols != "" {
+		if parsedMaxVols, err := strconv.Atoi(rawMaxVols); err != nil {
+			glog.Errorf("Unable to parse maxiumum PD volumes value, using default of %v: %v", defaultVal, err)
+		} else if parsedMaxVols <= 0 {
+			glog.Errorf("Maximum PD volumes must be a positive value, using default of %v", defaultVal)
+		} else {
+			return parsedMaxVols
+		}
+	}
+
+	return defaultVal
+}
 
 func init() {
 	factory.RegisterAlgorithmProvider(factory.DefaultProvider, defaultPredicates(), defaultPriorities())
@@ -41,7 +65,7 @@ func init() {
 		"ServiceSpreadingPriority",
 		factory.PriorityConfigFactory{
 			Function: func(args factory.PluginFactoryArgs) algorithm.PriorityFunction {
-				return priorities.NewSelectorSpreadPriority(args.ServiceLister, algorithm.EmptyControllerLister{})
+				return priorities.NewSelectorSpreadPriority(args.PodLister, args.ServiceLister, algorithm.EmptyControllerLister{}, algorithm.EmptyReplicaSetLister{})
 			},
 			Weight: 1,
 		},
@@ -49,6 +73,10 @@ func init() {
 	// PodFitsPorts has been replaced by PodFitsHostPorts for better user understanding.
 	// For backwards compatibility with 1.0, PodFitsPorts is regitered as well.
 	factory.RegisterFitPredicate("PodFitsPorts", predicates.PodFitsHostPorts)
+	// ImageLocalityPriority prioritizes nodes based on locality of images requested by a pod. Nodes with larger size
+	// of already-installed packages required by the pod will be preferred over nodes with no already-installed
+	// packages required by the pod or a small total size of already-installed packages required by the pod.
+	factory.RegisterPriorityFunction("ImageLocalityPriority", priorities.ImageLocalityPriority, 1)
 }
 
 func defaultPredicates() sets.String {
@@ -64,6 +92,13 @@ func defaultPredicates() sets.String {
 		),
 		// Fit is determined by non-conflicting disk volumes.
 		factory.RegisterFitPredicate("NoDiskConflict", predicates.NoDiskConflict),
+		// Fit is determined by volume zone requirements.
+		factory.RegisterFitPredicateFactory(
+			"NoVolumeZoneConflict",
+			func(args factory.PluginFactoryArgs) algorithm.FitPredicate {
+				return predicates.NewVolumeZonePredicate(args.NodeInfo, args.PVInfo, args.PVCInfo)
+			},
+		),
 		// Fit is determined by node selector query.
 		factory.RegisterFitPredicateFactory(
 			"MatchNodeSelector",
@@ -73,6 +108,26 @@ func defaultPredicates() sets.String {
 		),
 		// Fit is determined by the presence of the Host parameter and a string match
 		factory.RegisterFitPredicate("HostName", predicates.PodFitsHost),
+
+		// Fit is determined by whether or not there would be too many AWS EBS volumes attached to the node
+		factory.RegisterFitPredicateFactory(
+			"MaxEBSVolumeCount",
+			func(args factory.PluginFactoryArgs) algorithm.FitPredicate {
+				// TODO: allow for generically parameterized scheduler predicates, because this is a bit ugly
+				maxVols := getMaxVols(aws.DefaultMaxEBSVolumes)
+				return predicates.NewMaxPDVolumeCountPredicate(predicates.EBSVolumeFilter, maxVols, args.PVInfo, args.PVCInfo)
+			},
+		),
+
+		// Fit is determined by whether or not there would be too many GCE PD volumes attached to the node
+		factory.RegisterFitPredicateFactory(
+			"MaxGCEPDVolumeCount",
+			func(args factory.PluginFactoryArgs) algorithm.FitPredicate {
+				// TODO: allow for generically parameterized scheduler predicates, because this is a bit ugly
+				maxVols := getMaxVols(DefaultMaxGCEPDVolumes)
+				return predicates.NewMaxPDVolumeCountPredicate(predicates.GCEPDVolumeFilter, maxVols, args.PVInfo, args.PVCInfo)
+			},
+		),
 	)
 }
 
@@ -87,7 +142,16 @@ func defaultPriorities() sets.String {
 			"SelectorSpreadPriority",
 			factory.PriorityConfigFactory{
 				Function: func(args factory.PluginFactoryArgs) algorithm.PriorityFunction {
-					return priorities.NewSelectorSpreadPriority(args.ServiceLister, args.ControllerLister)
+					return priorities.NewSelectorSpreadPriority(args.PodLister, args.ServiceLister, args.ControllerLister, args.ReplicaSetLister)
+				},
+				Weight: 1,
+			},
+		),
+		factory.RegisterPriorityConfigFactory(
+			"NodeAffinityPriority",
+			factory.PriorityConfigFactory{
+				Function: func(args factory.PluginFactoryArgs) algorithm.PriorityFunction {
+					return priorities.NewNodeAffinityPriority(args.NodeLister)
 				},
 				Weight: 1,
 			},

@@ -3,7 +3,7 @@ import:
 - package: github.com/Masterminds/vcs
 - package: github.com/Masterminds/semver
 - package: k8s.io/kubernetes
-  version: v1.1.1
+  version: v1.2.1
   subpackages:
   - pkg/client
   - pkg/cmdutil
@@ -17,3 +17,4 @@ import:
 - package: github.com/masterzen/winrm
   version: 71c963ed3718881facabea7cf61bc7b13911902e
 - package: github.com/fatih/color
+- package: github.com/cloudfoundry-incubator/candiedyaml

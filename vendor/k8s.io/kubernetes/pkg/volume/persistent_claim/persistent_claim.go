@@ -40,8 +40,9 @@ const (
 	persistentClaimPluginName = "kubernetes.io/persistent-claim"
 )
 
-func (plugin *persistentClaimPlugin) Init(host volume.VolumeHost) {
+func (plugin *persistentClaimPlugin) Init(host volume.VolumeHost) error {
 	plugin.host = host
+	return nil
 }
 
 func (plugin *persistentClaimPlugin) Name() string {
@@ -53,7 +54,7 @@ func (plugin *persistentClaimPlugin) CanSupport(spec *volume.Spec) bool {
 }
 
 func (plugin *persistentClaimPlugin) NewBuilder(spec *volume.Spec, pod *api.Pod, opts volume.VolumeOptions) (volume.Builder, error) {
-	claim, err := plugin.host.GetKubeClient().PersistentVolumeClaims(pod.Namespace).Get(spec.Volume.PersistentVolumeClaim.ClaimName)
+	claim, err := plugin.host.GetKubeClient().Core().PersistentVolumeClaims(pod.Namespace).Get(spec.Volume.PersistentVolumeClaim.ClaimName)
 	if err != nil {
 		glog.Errorf("Error finding claim: %+v\n", spec.Volume.PersistentVolumeClaim.ClaimName)
 		return nil, err
@@ -63,7 +64,7 @@ func (plugin *persistentClaimPlugin) NewBuilder(spec *volume.Spec, pod *api.Pod,
 		return nil, fmt.Errorf("The claim %+v is not yet bound to a volume", claim.Name)
 	}
 
-	pv, err := plugin.host.GetKubeClient().PersistentVolumes().Get(claim.Spec.VolumeName)
+	pv, err := plugin.host.GetKubeClient().Core().PersistentVolumes().Get(claim.Spec.VolumeName)
 	if err != nil {
 		glog.Errorf("Error finding persistent volume for claim: %+v\n", claim.Name)
 		return nil, err
@@ -79,17 +80,13 @@ func (plugin *persistentClaimPlugin) NewBuilder(spec *volume.Spec, pod *api.Pod,
 		return nil, err
 	}
 
-	builder, err := plugin.host.NewWrapperBuilder(volume.NewSpecFromPersistentVolume(pv, spec.ReadOnly), pod, opts)
+	builder, err := plugin.host.NewWrapperBuilder(claim.Spec.VolumeName, *volume.NewSpecFromPersistentVolume(pv, spec.ReadOnly), pod, opts)
 	if err != nil {
 		glog.Errorf("Error creating builder for claim: %+v\n", claim.Name)
 		return nil, err
 	}
 
 	return builder, nil
-}
-
-func (plugin *persistentClaimPlugin) IsReadOnly() bool {
-	return plugin.readOnly
 }
 
 func (plugin *persistentClaimPlugin) NewCleaner(_ string, _ types.UID) (volume.Cleaner, error) {

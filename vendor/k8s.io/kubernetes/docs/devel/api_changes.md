@@ -3,6 +3,38 @@
 
 <!-- END MUNGE: UNVERSIONED_WARNING -->
 
+*This document is oriented at developers who want to change existing APIs.
+A set of API conventions, which applies to new APIs and to changes, can be
+found at [API Conventions](api-conventions.md).
+
+**Table of Contents**
+<!-- BEGIN MUNGE: GENERATED_TOC -->
+
+- [So you want to change the API?](#so-you-want-to-change-the-api)
+  - [Operational overview](#operational-overview)
+  - [On compatibility](#on-compatibility)
+  - [Incompatible API changes](#incompatible-api-changes)
+  - [Changing versioned APIs](#changing-versioned-apis)
+    - [Edit types.go](#edit-typesgo)
+    - [Edit defaults.go](#edit-defaultsgo)
+    - [Edit conversion.go](#edit-conversiongo)
+  - [Changing the internal structures](#changing-the-internal-structures)
+    - [Edit types.go](#edit-typesgo)
+  - [Edit validation.go](#edit-validationgo)
+  - [Edit version conversions](#edit-version-conversions)
+  - [Edit deep copy files](#edit-deep-copy-files)
+  - [Edit json (un)marshaling code](#edit-json-unmarshaling-code)
+  - [Making a new API Group](#making-a-new-api-group)
+  - [Update the fuzzer](#update-the-fuzzer)
+  - [Update the semantic comparisons](#update-the-semantic-comparisons)
+  - [Implement your change](#implement-your-change)
+  - [Write end-to-end tests](#write-end-to-end-tests)
+  - [Examples and docs](#examples-and-docs)
+  - [Alpha, Beta, and Stable Versions](#alpha-beta-and-stable-versions)
+    - [Adding Unstable Features to Stable Versions](#adding-unstable-features-to-stable-versions)
+
+<!-- END MUNGE: GENERATED_TOC -->
+
 # So you want to change the API?
 
 Before attempting a change to the API, you should familiarize yourself
@@ -129,7 +161,7 @@ type Frobber struct {
 	Height int           `json:"height"`
 	Width  int           `json:"width"`
 	Param  string        `json:"param"`  // the first param
-	ExtraParams []string `json:"params"` // additional params
+	ExtraParams []string `json:"extraParams"` // additional params
 }
 ```
 
@@ -244,6 +276,11 @@ enumerated set *can* be a compatible change, if handled properly (treat the
 removed value as deprecated but allowed). This is actually a special case of
 a new representation, discussed above.
 
+For [Unions](api-conventions.md), sets of fields where at most one should be set,
+it is acceptable to add a new option to the union if the [appropriate conventions]
+were followed in the original object.  Removing an option requires following
+the deprecation process.
+
 ## Incompatible API changes
 
 There are times when this might be OK, but mostly we want changes that
@@ -292,7 +329,8 @@ before starting "all the rest".
 The struct definitions for each API are in `pkg/api/<version>/types.go`.  Edit
 those files to reflect the change you want to make.  Note that all types and non-inline
 fields in versioned APIs must be preceded by descriptive comments - these are used to generate
-documentation.
+documentation.  Comments for types should not contain the type name; API documentation is
+generated from these comments and end-users should not be exposed to golang type names.
 
 Optional fields should have the `,omitempty` json tag; fields are interpreted as being
 required otherwise.
@@ -519,17 +557,13 @@ hack/update-swagger-spec.sh
 
 The API spec changes should be in a commit separate from your other changes.
 
-## Adding new REST objects
-
-TODO(smarterclayton): write this.
-
 ## Alpha, Beta, and Stable Versions
 
 New feature development proceeds through a series of stages of increasing maturity:
 
 - Development level
   - Object Versioning: no convention
-  - Availability: not commited to main kubernetes repo, and thus not available in offical releases
+  - Availability: not committed to main kubernetes repo, and thus not available in official releases
   - Audience: other developers closely collaborating on a feature or proof-of-concept
   - Upgradeability, Reliability, Completeness, and Support: no requirements or guarantees
 - Alpha level
@@ -561,7 +595,7 @@ New feature development proceeds through a series of stages of increasing maturi
     tests complete; the API has had a thorough API review and is thought to be complete, though use
     during beta may frequently turn up API issues not thought of during review
   - Upgradeability: the object schema and semantics may change in a later software release; when
-    this happens, an upgrade path will be documentedr; in some cases, objects will be automatically
+    this happens, an upgrade path will be documented; in some cases, objects will be automatically
     converted to the new version; in other cases, a manual upgrade may be necessary;  a manual
     upgrade may require downtime for anything relying on the new feature, and may require
     manual conversion of objects to the new version; when manual conversion is necessary, the
@@ -586,6 +620,82 @@ New feature development proceeds through a series of stages of increasing maturi
   - Cluster Reliability: high
   - Support: API version will continue to be present for many subsequent software releases;
   - Recommended Use Cases: any
+
+### Adding Unstable Features to Stable Versions
+
+When adding a feature to an object which is already Stable, the new fields and new behaviors
+need to meet the Stable level requirements.  If these cannot be met, then the new
+field cannot be added to the object.
+
+For example, consider the following object:
+
+```go
+// API v6.
+type Frobber struct {
+	Height int    `json:"height"`
+	Param  string `json:"param"`
+}
+```
+
+A developer is considering adding a new `Width` parameter, like this:
+
+```go
+// API v6.
+type Frobber struct {
+	Height int    `json:"height"`
+	Width int    `json:"height"`
+	Param  string `json:"param"`
+}
+```
+
+However, the new feature is not stable enough to be used in a stable version (`v6`).
+Some reasons for this might include:
+
+- the final representation is undecided (e.g. should it be called `Width` or `Breadth`?)
+- the implementation is not stable enough for general use (e.g. the `Area()` routine sometimes overflows.)
+
+The developer cannot add the new field until stability is met.  However, sometimes stability
+cannot be met until some users try the new feature, and some users are only able or willing
+to accept a released version of Kubernetes.  In that case, the developer has a few options,
+both of which require staging work over several releases.
+
+
+A preferred option is to first make a release where the new value (`Width` in this example)
+is specified via an annotation, like this:
+
+```go
+kind: frobber
+version: v6
+metadata:
+  name: myfrobber
+  annotations:
+    frobbing.alpha.kubernetes.io/width: 2
+height: 4
+param: "green and blue"
+```
+
+This format allows users to specify the new field, but makes it clear
+that they are using a Alpha feature when they do, since the word `alpha`
+is in the annotation key.
+
+Another option is to introduce a new type with an new `alpha` or `beta` version
+designator, like this:
+
+```
+// API v6alpha2
+type Frobber struct {
+	Height int    `json:"height"`
+	Width int    `json:"height"`
+	Param  string `json:"param"`
+}
+```
+
+The latter requires that all objects in the same API group as `Frobber` to be replicated in
+the new version, `v6alpha2`.   This also requires user to use a new client which uses the
+other version.    Therefore, this is not a preferred option.
+
+A releated issue is how a cluster manager can roll back from a new version
+with a new feature, that is already being used by users.  See https://github.com/kubernetes/kubernetes/issues/4855.
 
 
 

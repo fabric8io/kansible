@@ -33,6 +33,7 @@ rootdir = os.path.abspath(rootdir)
 
 def get_refs():
     refs = {}
+
     for path in glob.glob(os.path.join(rootdir, "hack/boilerplate/boilerplate.*.txt")):
         extension = os.path.basename(path).split(".")[1]
 
@@ -52,8 +53,12 @@ def file_passes(filename, refs, regexs):
     data = f.read()
     f.close()
 
+    basename = os.path.basename(filename)
     extension = file_extension(filename)
-    ref = refs[extension]
+    if extension != "":
+        ref = refs[extension]
+    else:
+        ref = refs[basename]
 
     # remove build tags from the top of Go files
     if extension == "go":
@@ -79,7 +84,7 @@ def file_passes(filename, refs, regexs):
         if p.search(d):
             return False
 
-    # Replace all occurrences of the regex "2015|2014" with "YEAR"
+    # Replace all occurrences of the regex "2016|2015|2014" with "YEAR"
     p = regexs["date"]
     for i, d in enumerate(data):
         (data[i], found) = p.subn('YEAR', d)
@@ -95,7 +100,7 @@ def file_passes(filename, refs, regexs):
 def file_extension(filename):
     return os.path.splitext(filename)[1].split(".")[-1].lower()
 
-skipped_dirs = ['Godeps', 'third_party', '_output', '.git']
+skipped_dirs = ['Godeps', 'third_party', '_gopath', '_output', '.git', 'cluster/env.sh']
 def normalize_files(files):
     newfiles = []
     for pathname in files:
@@ -128,8 +133,9 @@ def get_files(extensions):
     files = normalize_files(files)
     outfiles = []
     for pathname in files:
+        basename = os.path.basename(pathname)
         extension = file_extension(pathname)
-        if extension in extensions:
+        if extension in extensions or basename in extensions:
             outfiles.append(pathname)
     return outfiles
 
@@ -137,8 +143,8 @@ def get_regexs():
     regexs = {}
     # Search for "YEAR" which exists in the boilerplate, but shouldn't in the real thing
     regexs["year"] = re.compile( 'YEAR' )
-    # dates can be 2014 or 2015, company holder names can be anything
-    regexs["date"] = re.compile( '(2014|2015)' )
+    # dates can be 2014, 2015 or 2016, company holder names can be anything
+    regexs["date"] = re.compile( '(2014|2015|2016)' )
     # strip // +build \n\n build constraints
     regexs["go_build_constraints"] = re.compile(r"^(// \+build.*\n)+\n", re.MULTILINE)
     # strip #!.* from shell scripts

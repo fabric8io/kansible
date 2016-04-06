@@ -17,11 +17,23 @@ limitations under the License.
 package job
 
 import (
+	"reflect"
 	"testing"
 
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/testapi"
+	apitesting "k8s.io/kubernetes/pkg/api/testing"
+	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/apis/extensions"
+	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/types"
 )
+
+func newBool(a bool) *bool {
+	r := new(bool)
+	*r = a
+	return r
+}
 
 func TestJobStrategy(t *testing.T) {
 	ctx := api.NewDefaultContext()
@@ -32,7 +44,7 @@ func TestJobStrategy(t *testing.T) {
 		t.Errorf("Job should not allow create on update")
 	}
 
-	validSelector := &extensions.PodSelector{
+	validSelector := &unversioned.LabelSelector{
 		MatchLabels: map[string]string{"a": "b"},
 	}
 	validPodTemplateSpec := api.PodTemplateSpec{
@@ -51,8 +63,9 @@ func TestJobStrategy(t *testing.T) {
 			Namespace: api.NamespaceDefault,
 		},
 		Spec: extensions.JobSpec{
-			Selector: validSelector,
-			Template: validPodTemplateSpec,
+			Selector:       validSelector,
+			Template:       validPodTemplateSpec,
+			ManualSelector: newBool(true),
 		},
 		Status: extensions.JobStatus{
 			Active: 11,
@@ -89,6 +102,56 @@ func TestJobStrategy(t *testing.T) {
 	}
 }
 
+func TestJobStrategyWithGeneration(t *testing.T) {
+	ctx := api.NewDefaultContext()
+
+	theUID := types.UID("1a2b3c4d5e6f7g8h9i0k")
+
+	validPodTemplateSpec := api.PodTemplateSpec{
+		Spec: api.PodSpec{
+			RestartPolicy: api.RestartPolicyOnFailure,
+			DNSPolicy:     api.DNSClusterFirst,
+			Containers:    []api.Container{{Name: "abc", Image: "image", ImagePullPolicy: "IfNotPresent"}},
+		},
+	}
+	job := &extensions.Job{
+		ObjectMeta: api.ObjectMeta{
+			Name:      "myjob2",
+			Namespace: api.NamespaceDefault,
+			UID:       theUID,
+		},
+		Spec: extensions.JobSpec{
+			Selector: nil,
+			Template: validPodTemplateSpec,
+		},
+	}
+
+	Strategy.PrepareForCreate(job)
+	errs := Strategy.Validate(ctx, job)
+	if len(errs) != 0 {
+		t.Errorf("Unexpected error validating %v", errs)
+	}
+
+	// Validate the stuff that validation should have validated.
+	if job.Spec.Selector == nil {
+		t.Errorf("Selector not generated")
+	}
+	expectedLabels := make(map[string]string)
+	expectedLabels["controller-uid"] = string(theUID)
+	if !reflect.DeepEqual(job.Spec.Selector.MatchLabels, expectedLabels) {
+		t.Errorf("Expected label selector not generated")
+	}
+	if job.Spec.Template.ObjectMeta.Labels == nil {
+		t.Errorf("Expected template labels not generated")
+	}
+	if v, ok := job.Spec.Template.ObjectMeta.Labels["job-name"]; !ok || v != "myjob2" {
+		t.Errorf("Expected template labels not present")
+	}
+	if v, ok := job.Spec.Template.ObjectMeta.Labels["controller-uid"]; !ok || v != string(theUID) {
+		t.Errorf("Expected template labels not present: ok: %v, v: %v", ok, v)
+	}
+}
+
 func TestJobStatusStrategy(t *testing.T) {
 	ctx := api.NewDefaultContext()
 	if !StatusStrategy.NamespaceScoped() {
@@ -97,7 +160,7 @@ func TestJobStatusStrategy(t *testing.T) {
 	if StatusStrategy.AllowCreateOnUpdate() {
 		t.Errorf("Job should not allow create on update")
 	}
-	validSelector := &extensions.PodSelector{
+	validSelector := &unversioned.LabelSelector{
 		MatchLabels: map[string]string{"a": "b"},
 	}
 	validPodTemplateSpec := api.PodTemplateSpec{
@@ -157,4 +220,13 @@ func TestJobStatusStrategy(t *testing.T) {
 	if newJob.ResourceVersion != "9" {
 		t.Errorf("Incoming resource version on update should not be mutated")
 	}
+}
+
+func TestSelectableFieldLabelConversions(t *testing.T) {
+	apitesting.TestSelectableFieldLabelConversionsOfKind(t,
+		testapi.Extensions.GroupVersion().String(),
+		"Job",
+		labels.Set(JobToSelectableFields(&extensions.Job{})),
+		nil,
+	)
 }

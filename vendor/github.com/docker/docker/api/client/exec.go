@@ -15,7 +15,7 @@ import (
 //
 // Usage: docker exec [OPTIONS] CONTAINER COMMAND [ARG...]
 func (cli *DockerCli) CmdExec(args ...string) error {
-	cmd := cli.Subcmd("exec", "CONTAINER COMMAND [ARG...]", "Run a command in a running container", true)
+	cmd := cli.Subcmd("exec", []string{"CONTAINER COMMAND [ARG...]"}, "Run a command in a running container", true)
 
 	execConfig, err := runconfig.ParseExec(cmd, args)
 	// just in case the ParseExec does not exit
@@ -23,13 +23,15 @@ func (cli *DockerCli) CmdExec(args ...string) error {
 		return StatusError{StatusCode: 1}
 	}
 
-	stream, _, err := cli.call("POST", "/containers/"+execConfig.Container+"/exec", execConfig, nil)
+	serverResp, err := cli.call("POST", "/containers/"+execConfig.Container+"/exec", execConfig, nil)
 	if err != nil {
 		return err
 	}
 
+	defer serverResp.body.Close()
+
 	var response types.ContainerExecCreateResponse
-	if err := json.NewDecoder(stream).Decode(&response); err != nil {
+	if err := json.NewDecoder(serverResp.body).Decode(&response); err != nil {
 		return err
 	}
 

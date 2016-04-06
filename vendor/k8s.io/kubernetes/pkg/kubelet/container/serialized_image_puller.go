@@ -24,12 +24,14 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/client/record"
 	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/util/wait"
 )
 
 type imagePullRequest struct {
 	spec        ImageSpec
 	container   *api.Container
 	pullSecrets []api.Secret
+	logPrefix   string
 	ref         *api.ObjectReference
 	returnChan  chan<- error
 }
@@ -40,6 +42,7 @@ type imagePullRequest struct {
 type serializedImagePuller struct {
 	recorder     record.EventRecorder
 	runtime      Runtime
+	backOff      *util.Backoff
 	pullRequests chan *imagePullRequest
 }
 
@@ -50,35 +53,29 @@ var _ ImagePuller = &serializedImagePuller{}
 // image puller that wraps the container runtime's PullImage interface.
 // Pulls one image at a time.
 // Issue #10959 has the rationale behind serializing image pulls.
-func NewSerializedImagePuller(recorder record.EventRecorder, runtime Runtime) ImagePuller {
+func NewSerializedImagePuller(recorder record.EventRecorder, runtime Runtime, imageBackOff *util.Backoff) ImagePuller {
 	imagePuller := &serializedImagePuller{
 		recorder:     recorder,
 		runtime:      runtime,
+		backOff:      imageBackOff,
 		pullRequests: make(chan *imagePullRequest, 10),
 	}
-	go util.Until(imagePuller.pullImages, time.Second, util.NeverStop)
+	go wait.Until(imagePuller.pullImages, time.Second, wait.NeverStop)
 	return imagePuller
 }
 
-// reportImagePull reports 'image pulling', 'image pulled' or 'image pulling failed' events.
-func (puller *serializedImagePuller) reportImagePull(ref *api.ObjectReference, event string, image string, pullError error) {
-	if ref == nil {
-		return
-	}
-
-	switch event {
-	case "pulling":
-		puller.recorder.Eventf(ref, "Pulling", "Pulling image %q", image)
-	case "pulled":
-		puller.recorder.Eventf(ref, "Pulled", "Successfully pulled image %q", image)
-	case "failed":
-		puller.recorder.Eventf(ref, "Failed", "Failed to pull image %q: %v", image, pullError)
-
+// records an event using ref, event msg.  log to glog using prefix, msg, logFn
+func (puller *serializedImagePuller) logIt(ref *api.ObjectReference, eventtype, event, prefix, msg string, logFn func(args ...interface{})) {
+	if ref != nil {
+		puller.recorder.Event(ref, eventtype, event, msg)
+	} else {
+		logFn(fmt.Sprint(prefix, " ", msg))
 	}
 }
 
 // PullImage pulls the image for the specified pod and container.
-func (puller *serializedImagePuller) PullImage(pod *api.Pod, container *api.Container, pullSecrets []api.Secret) error {
+func (puller *serializedImagePuller) PullImage(pod *api.Pod, container *api.Container, pullSecrets []api.Secret) (error, string) {
+	logPrefix := fmt.Sprintf("%s/%s", pod.Name, container.Image)
 	ref, err := GenerateContainerRef(pod, container)
 	if err != nil {
 		glog.Errorf("Couldn't make a ref to pod %v, container %v: '%v'", pod.Name, container.Name, err)
@@ -87,17 +84,28 @@ func (puller *serializedImagePuller) PullImage(pod *api.Pod, container *api.Cont
 	spec := ImageSpec{container.Image}
 	present, err := puller.runtime.IsImagePresent(spec)
 	if err != nil {
-		if ref != nil {
-			puller.recorder.Eventf(ref, "Failed", "Failed to inspect image %q: %v", container.Image, err)
-		}
-		return fmt.Errorf("failed to inspect image %q: %v", container.Image, err)
+		msg := fmt.Sprintf("Failed to inspect image %q: %v", container.Image, err)
+		puller.logIt(ref, api.EventTypeWarning, FailedToInspectImage, logPrefix, msg, glog.Warning)
+		return ErrImageInspect, msg
 	}
 
 	if !shouldPullImage(container, present) {
-		if present && ref != nil {
-			puller.recorder.Eventf(ref, "Pulled", "Container image %q already present on machine", container.Image)
+		if present {
+			msg := fmt.Sprintf("Container image %q already present on machine", container.Image)
+			puller.logIt(ref, api.EventTypeNormal, PulledImage, logPrefix, msg, glog.Info)
+			return nil, ""
+		} else {
+			msg := fmt.Sprintf("Container image %q is not present with pull policy of Never", container.Image)
+			puller.logIt(ref, api.EventTypeWarning, ErrImageNeverPullPolicy, logPrefix, msg, glog.Warning)
+			return ErrImageNeverPull, msg
 		}
-		return nil
+	}
+
+	backOffKey := fmt.Sprintf("%s_%s", pod.Name, container.Image)
+	if puller.backOff.IsInBackOffSinceUpdate(backOffKey, puller.backOff.Clock.Now()) {
+		msg := fmt.Sprintf("Back-off pulling image %q", container.Image)
+		puller.logIt(ref, api.EventTypeNormal, BackOffPullImage, logPrefix, msg, glog.Info)
+		return ErrImagePullBackOff, msg
 	}
 
 	// enqueue image pull request and wait for response.
@@ -106,20 +114,28 @@ func (puller *serializedImagePuller) PullImage(pod *api.Pod, container *api.Cont
 		spec:        spec,
 		container:   container,
 		pullSecrets: pullSecrets,
+		logPrefix:   logPrefix,
 		ref:         ref,
 		returnChan:  returnChan,
 	}
-	if err := <-returnChan; err != nil {
-		puller.reportImagePull(ref, "failed", container.Image, err)
-		return err
+	if err = <-returnChan; err != nil {
+		puller.logIt(ref, api.EventTypeWarning, FailedToPullImage, logPrefix, fmt.Sprintf("Failed to pull image %q: %v", container.Image, err), glog.Warning)
+		puller.backOff.Next(backOffKey, puller.backOff.Clock.Now())
+		if err == RegistryUnavailable {
+			msg := fmt.Sprintf("image pull failed for %s because the registry is temporarily unavailable.", container.Image)
+			return err, msg
+		} else {
+			return ErrImagePull, err.Error()
+		}
 	}
-	puller.reportImagePull(ref, "pulled", container.Image, nil)
-	return nil
+	puller.logIt(ref, api.EventTypeNormal, PulledImage, logPrefix, fmt.Sprintf("Successfully pulled image %q", container.Image), glog.Info)
+	puller.backOff.GC()
+	return nil, ""
 }
 
 func (puller *serializedImagePuller) pullImages() {
 	for pullRequest := range puller.pullRequests {
-		puller.reportImagePull(pullRequest.ref, "pulling", pullRequest.container.Image, nil)
+		puller.logIt(pullRequest.ref, api.EventTypeNormal, PullingImage, pullRequest.logPrefix, fmt.Sprintf("pulling image %q", pullRequest.container.Image), glog.Info)
 		pullRequest.returnChan <- puller.runtime.PullImage(pullRequest.spec, pullRequest.pullSecrets)
 	}
 }

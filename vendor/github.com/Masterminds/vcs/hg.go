@@ -1,6 +1,7 @@
 package vcs
 
 import (
+	"encoding/xml"
 	"os"
 	"os/exec"
 	"regexp"
@@ -159,4 +160,51 @@ func (s *HgRepo) IsReference(r string) bool {
 func (s *HgRepo) IsDirty() bool {
 	out, err := s.runFromDir("hg", "diff")
 	return err != nil || len(out) != 0
+}
+
+// CommitInfo retrieves metadata about a commit.
+func (s *HgRepo) CommitInfo(id string) (*CommitInfo, error) {
+	out, err := s.runFromDir("hg", "log", "-r", id, "--style=xml")
+	if err != nil {
+		return nil, ErrRevisionUnavailable
+	}
+
+	type Author struct {
+		Name  string `xml:",chardata"`
+		Email string `xml:"email,attr"`
+	}
+	type Logentry struct {
+		Node   string `xml:"node,attr"`
+		Author Author `xml:"author"`
+		Date   string `xml:"date"`
+		Msg    string `xml:"msg"`
+	}
+	type Log struct {
+		XMLName xml.Name   `xml:"log"`
+		Logs    []Logentry `xml:"logentry"`
+	}
+
+	logs := &Log{}
+	err = xml.Unmarshal(out, &logs)
+	if err != nil {
+		return nil, err
+	}
+	if len(logs.Logs) == 0 {
+		return nil, ErrRevisionUnavailable
+	}
+
+	ci := &CommitInfo{
+		Commit:  logs.Logs[0].Node,
+		Author:  logs.Logs[0].Author.Name + " <" + logs.Logs[0].Author.Email + ">",
+		Message: logs.Logs[0].Msg,
+	}
+
+	if logs.Logs[0].Date != "" {
+		ci.Date, err = time.Parse(time.RFC3339, logs.Logs[0].Date)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return ci, nil
 }

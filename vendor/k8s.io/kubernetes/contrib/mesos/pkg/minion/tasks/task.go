@@ -19,6 +19,7 @@ package tasks
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os/exec"
 	"sync"
 	"sync/atomic"
@@ -87,13 +88,13 @@ func (cp *cmdProcess) Kill(force bool) (int, error) {
 // logging and restart handling as well as provides event channels for communicating process
 // termination and errors related to process management.
 type Task struct {
+	Env          []string                   // optional: process environment override
 	Finished     func(restarting bool) bool // callback invoked when a task process has completed; if `restarting` then it will be restarted if it returns true
 	RestartDelay time.Duration              // interval between repeated task restarts
 
 	name         string                // required: unique name for this task
 	bin          string                // required: path to executable
 	args         []string              // optional: process arguments
-	env          []string              // optional: process environment override
 	createLogger func() io.WriteCloser // factory func that builds a log writer
 	cmd          systemProcess         // process that we started
 	completedCh  chan *Completion      // reports exit codes encountered when task processes exit, or errors during process management
@@ -106,12 +107,11 @@ type Task struct {
 
 // New builds a newly initialized task object but does not start any processes for it. callers
 // are expected to invoke task.run(...) on their own.
-func New(name, bin string, args, env []string, cl func() io.WriteCloser) *Task {
+func New(name, bin string, args []string, cl func() io.WriteCloser, options ...Option) *Task {
 	t := &Task{
 		name:         name,
 		bin:          bin,
 		args:         args,
-		env:          env,
 		createLogger: cl,
 		completedCh:  make(chan *Completion),
 		shouldQuit:   make(chan struct{}),
@@ -120,6 +120,9 @@ func New(name, bin string, args, env []string, cl func() io.WriteCloser) *Task {
 		Finished:     func(restarting bool) bool { return restarting },
 	}
 	t.killFunc = func(force bool) (int, error) { return t.cmd.Kill(force) }
+	for _, opt := range options {
+		opt(t)
+	}
 	return t
 }
 
@@ -218,10 +221,15 @@ func notStartedTask(t *Task) taskStateFn {
 
 	// create command
 	cmd := exec.Command(t.bin, t.args...)
-	if _, err := cmd.StdoutPipe(); err != nil {
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
 		t.tryError(fmt.Errorf("error getting stdout of %v: %v", t.name, err))
 		return taskShouldRestart
 	}
+	go func() {
+		defer stdout.Close()
+		io.Copy(ioutil.Discard, stdout) // TODO(jdef) we might want to save this at some point
+	}()
 	stderrLogs, err := cmd.StderrPipe()
 	if err != nil {
 		t.tryError(fmt.Errorf("error getting stderr of %v: %v", t.name, err))
@@ -229,8 +237,8 @@ func notStartedTask(t *Task) taskStateFn {
 	}
 
 	t.initLogging(stderrLogs)
-	if len(t.env) > 0 {
-		cmd.Env = t.env
+	if len(t.Env) > 0 {
+		cmd.Env = t.Env
 	}
 	cmd.SysProcAttr = sysProcAttr()
 
@@ -281,7 +289,7 @@ func taskRunning(t *Task) taskStateFn {
 
 	select {
 	case <-t.shouldQuit:
-		t.tryComplete(t.awaitDeath(defaultKillGracePeriod, waitCh))
+		t.tryComplete(t.awaitDeath(&realTimer{}, defaultKillGracePeriod, waitCh))
 	case wr := <-waitCh:
 		t.tryComplete(wr)
 	}
@@ -290,7 +298,9 @@ func taskRunning(t *Task) taskStateFn {
 
 // awaitDeath waits for the process to complete, or else for a "quit" signal on the task-
 // at which point we'll attempt to kill manually.
-func (t *Task) awaitDeath(gracePeriod time.Duration, waitCh <-chan *Completion) *Completion {
+func (t *Task) awaitDeath(timer timer, gracePeriod time.Duration, waitCh <-chan *Completion) *Completion {
+	defer timer.discard()
+
 	select {
 	case wr := <-waitCh:
 		// got a signal to quit, but we're already finished
@@ -318,10 +328,11 @@ waitLoop:
 		}
 
 		// Wait for the kill to be processed, and child proc resources cleaned up; try to avoid zombies!
+		timer.set(gracePeriod)
 		select {
 		case wr = <-waitCh:
 			break waitLoop
-		case <-time.After(gracePeriod):
+		case <-timer.await():
 			// want a timeout, but a shorter one than we used initially.
 			// using /= 2 is deterministic and yields the desirable effect.
 			gracePeriod /= 2
@@ -379,4 +390,42 @@ func MergeOutput(tasks []*Task, shouldQuit <-chan struct{}) Events {
 	})
 	ei := newEventsImpl(tclistener, done)
 	return ei
+}
+
+// Option is a functional option type for a Task that returns an "undo" Option after upon modifying the Task
+type Option func(*Task) Option
+
+// NoRespawn configures the Task lifecycle such that it will not respawn upon termination
+func NoRespawn(listener chan<- struct{}) Option {
+	return func(t *Task) Option {
+		finished, restartDelay := t.Finished, t.RestartDelay
+
+		t.Finished = func(_ bool) bool {
+			// this func implements the task.finished spec, so when the task exits
+			// we return false to indicate that it should not be restarted. we also
+			// close execDied to signal interested listeners.
+			if listener != nil {
+				close(listener)
+				listener = nil
+			}
+			return false
+		}
+
+		// since we only expect to die once, and there is no restart; don't delay any longer than needed
+		t.RestartDelay = 0
+
+		return func(t2 *Task) Option {
+			t2.Finished, t2.RestartDelay = finished, restartDelay
+			return NoRespawn(listener)
+		}
+	}
+}
+
+// Environment customizes the process runtime environment for a Task
+func Environment(env []string) Option {
+	return func(t *Task) Option {
+		oldenv := t.Env
+		t.Env = env[:]
+		return Environment(oldenv)
+	}
 }

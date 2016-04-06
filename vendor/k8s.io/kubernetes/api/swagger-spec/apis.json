@@ -1,7 +1,7 @@
 {
   "swaggerVersion": "1.2",
   "apiVersion": "",
-  "basePath": "https://10.10.10.10:6443",
+  "basePath": "https://10.10.10.10:443",
   "resourcePath": "/apis",
   "apis": [
    {
@@ -15,10 +15,12 @@
       "nickname": "getAPIVersions",
       "parameters": [],
       "produces": [
-       "application/json"
+       "application/json",
+       "application/yaml"
       ],
       "consumes": [
-       "application/json"
+       "application/json",
+       "application/yaml"
       ]
      }
     ]

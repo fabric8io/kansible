@@ -20,9 +20,14 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/emicklei/go-restful/swagger"
+
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/registered"
 	"k8s.io/kubernetes/pkg/api/unversioned"
+	"k8s.io/kubernetes/pkg/api/v1"
+	"k8s.io/kubernetes/pkg/apimachinery/registered"
+	"k8s.io/kubernetes/pkg/client/restclient"
+	"k8s.io/kubernetes/pkg/client/typed/discovery"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/version"
@@ -31,7 +36,7 @@ import (
 
 // NewSimpleFake returns a client that will respond with the provided objects
 func NewSimpleFake(objects ...runtime.Object) *Fake {
-	o := NewObjects(api.Scheme, api.Scheme)
+	o := NewObjects(api.Scheme, api.Codecs.UniversalDecoder())
 	for _, obj := range objects {
 		if err := o.Add(obj); err != nil {
 			panic(err)
@@ -39,7 +44,9 @@ func NewSimpleFake(objects ...runtime.Object) *Fake {
 	}
 
 	fakeClient := &Fake{}
-	fakeClient.AddReactor("*", "*", ObjectReaction(o, api.RESTMapper))
+	fakeClient.AddReactor("*", "*", ObjectReaction(o, registered.RESTMapper()))
+
+	fakeClient.AddWatchReactor("*", DefaultWatchReactor(watch.NewFake(), nil))
 
 	return fakeClient
 }
@@ -81,7 +88,7 @@ type ProxyReactor interface {
 	// Handles indicates whether or not this Reactor deals with a given action
 	Handles(action Action) bool
 	// React handles a watch action and returns results.  It may choose to delegate by indicated handled=false
-	React(action Action) (handled bool, ret client.ResponseWrapper, err error)
+	React(action Action) (handled bool, ret restclient.ResponseWrapper, err error)
 }
 
 // ReactionFunc is a function that returns an object or error for a given Action.  If "handled" is false,
@@ -94,7 +101,7 @@ type WatchReactionFunc func(action Action) (handled bool, ret watch.Interface, e
 
 // ProxyReactionFunc is a function that returns a ResponseWrapper interface for a given Action.  If "handled" is false,
 // then the test client will continue ignore the results and continue to the next ProxyReactionFunc
-type ProxyReactionFunc func(action Action) (handled bool, ret client.ResponseWrapper, err error)
+type ProxyReactionFunc func(action Action) (handled bool, ret restclient.ResponseWrapper, err error)
 
 // AddReactor appends a reactor to the end of the chain
 func (c *Fake) AddReactor(verb, resource string, reaction ReactionFunc) {
@@ -103,9 +110,7 @@ func (c *Fake) AddReactor(verb, resource string, reaction ReactionFunc) {
 
 // PrependReactor adds a reactor to the beginning of the chain
 func (c *Fake) PrependReactor(verb, resource string, reaction ReactionFunc) {
-	newChain := make([]Reactor, 0, len(c.ReactionChain)+1)
-	newChain[0] = &SimpleReactor{verb, resource, reaction}
-	newChain = append(newChain, c.ReactionChain...)
+	c.ReactionChain = append([]Reactor{&SimpleReactor{verb, resource, reaction}}, c.ReactionChain...)
 }
 
 // AddWatchReactor appends a reactor to the end of the chain
@@ -113,9 +118,19 @@ func (c *Fake) AddWatchReactor(resource string, reaction WatchReactionFunc) {
 	c.WatchReactionChain = append(c.WatchReactionChain, &SimpleWatchReactor{resource, reaction})
 }
 
+// PrependWatchReactor adds a reactor to the beginning of the chain
+func (c *Fake) PrependWatchReactor(resource string, reaction WatchReactionFunc) {
+	c.WatchReactionChain = append([]WatchReactor{&SimpleWatchReactor{resource, reaction}}, c.WatchReactionChain...)
+}
+
 // AddProxyReactor appends a reactor to the end of the chain
 func (c *Fake) AddProxyReactor(resource string, reaction ProxyReactionFunc) {
 	c.ProxyReactionChain = append(c.ProxyReactionChain, &SimpleProxyReactor{resource, reaction})
+}
+
+// PrependProxyReactor adds a reactor to the beginning of the chain
+func (c *Fake) PrependProxyReactor(resource string, reaction ProxyReactionFunc) {
+	c.ProxyReactionChain = append([]ProxyReactor{&SimpleProxyReactor{resource, reaction}}, c.ProxyReactionChain...)
 }
 
 // Invokes records the provided Action and then invokes the ReactFn (if provided).
@@ -164,7 +179,7 @@ func (c *Fake) InvokesWatch(action Action) (watch.Interface, error) {
 }
 
 // InvokesProxy records the provided Action and then invokes the ReactFn (if provided).
-func (c *Fake) InvokesProxy(action Action) client.ResponseWrapper {
+func (c *Fake) InvokesProxy(action Action) restclient.ResponseWrapper {
 	c.Lock()
 	defer c.Unlock()
 
@@ -218,6 +233,10 @@ func (c *Fake) Nodes() client.NodeInterface {
 	return &FakeNodes{Fake: c}
 }
 
+func (c *Fake) PodSecurityPolicies() client.PodSecurityPolicyInterface {
+	return &FakePodSecurityPolicy{Fake: c}
+}
+
 func (c *Fake) Events(namespace string) client.EventInterface {
 	return &FakeEvents{Fake: c, Namespace: namespace}
 }
@@ -258,35 +277,73 @@ func (c *Fake) Namespaces() client.NamespaceInterface {
 	return &FakeNamespaces{Fake: c}
 }
 
+func (c *Fake) Autoscaling() client.AutoscalingInterface {
+	return &FakeAutoscaling{c}
+}
+
+func (c *Fake) Batch() client.BatchInterface {
+	return &FakeBatch{c}
+}
+
 func (c *Fake) Extensions() client.ExtensionsInterface {
 	return &FakeExperimental{c}
 }
 
-func (c *Fake) Discovery() client.DiscoveryInterface {
+func (c *Fake) Discovery() discovery.DiscoveryInterface {
 	return &FakeDiscovery{c}
-}
-
-func (c *Fake) ServerVersion() (*version.Info, error) {
-	action := ActionImpl{}
-	action.Verb = "get"
-	action.Resource = "version"
-
-	c.Invokes(action, nil)
-	versionInfo := version.Get()
-	return &versionInfo, nil
-}
-
-func (c *Fake) ServerAPIVersions() (*unversioned.APIVersions, error) {
-	action := ActionImpl{}
-	action.Verb = "get"
-	action.Resource = "apiversions"
-
-	c.Invokes(action, nil)
-	return &unversioned.APIVersions{Versions: registered.RegisteredVersions}, nil
 }
 
 func (c *Fake) ComponentStatuses() client.ComponentStatusInterface {
 	return &FakeComponentStatuses{Fake: c}
+}
+
+func (c *Fake) ConfigMaps(namespace string) client.ConfigMapsInterface {
+	return &FakeConfigMaps{Fake: c, Namespace: namespace}
+}
+
+// SwaggerSchema returns an empty swagger.ApiDeclaration for testing
+func (c *Fake) SwaggerSchema(version unversioned.GroupVersion) (*swagger.ApiDeclaration, error) {
+	action := ActionImpl{}
+	action.Verb = "get"
+	if version == v1.SchemeGroupVersion {
+		action.Resource = "/swaggerapi/api/" + version.Version
+	} else {
+		action.Resource = "/swaggerapi/apis/" + version.Group + "/" + version.Version
+	}
+
+	c.Invokes(action, nil)
+	return &swagger.ApiDeclaration{}, nil
+}
+
+// NewSimpleFakeAutoscaling returns a client that will respond with the provided objects
+func NewSimpleFakeAutoscaling(objects ...runtime.Object) *FakeAutoscaling {
+	return &FakeAutoscaling{Fake: NewSimpleFake(objects...)}
+}
+
+type FakeAutoscaling struct {
+	*Fake
+}
+
+func (c *FakeAutoscaling) HorizontalPodAutoscalers(namespace string) client.HorizontalPodAutoscalerInterface {
+	return &FakeHorizontalPodAutoscalersV1{Fake: c, Namespace: namespace}
+}
+
+// NewSimpleFakeBatch returns a client that will respond with the provided objects
+func NewSimpleFakeBatch(objects ...runtime.Object) *FakeBatch {
+	return &FakeBatch{Fake: NewSimpleFake(objects...)}
+}
+
+type FakeBatch struct {
+	*Fake
+}
+
+func (c *FakeBatch) Jobs(namespace string) client.JobInterface {
+	return &FakeJobsV1{Fake: c, Namespace: namespace}
+}
+
+// NewSimpleFakeExp returns a client that will respond with the provided objects
+func NewSimpleFakeExp(objects ...runtime.Object) *FakeExperimental {
+	return &FakeExperimental{Fake: NewSimpleFake(objects...)}
 }
 
 type FakeExperimental struct {
@@ -317,6 +374,14 @@ func (c *FakeExperimental) Ingress(namespace string) client.IngressInterface {
 	return &FakeIngress{Fake: c, Namespace: namespace}
 }
 
+func (c *FakeExperimental) ThirdPartyResources(namespace string) client.ThirdPartyResourceInterface {
+	return &FakeThirdPartyResources{Fake: c, Namespace: namespace}
+}
+
+func (c *FakeExperimental) ReplicaSets(namespace string) client.ReplicaSetInterface {
+	return &FakeReplicaSets{Fake: c, Namespace: namespace}
+}
+
 type FakeDiscovery struct {
 	*Fake
 }
@@ -341,4 +406,14 @@ func (c *FakeDiscovery) ServerResources() (map[string]*unversioned.APIResourceLi
 
 func (c *FakeDiscovery) ServerGroups() (*unversioned.APIGroupList, error) {
 	return nil, nil
+}
+
+func (c *FakeDiscovery) ServerVersion() (*version.Info, error) {
+	action := ActionImpl{}
+	action.Verb = "get"
+	action.Resource = "version"
+
+	c.Invokes(action, nil)
+	versionInfo := version.Get()
+	return &versionInfo, nil
 }

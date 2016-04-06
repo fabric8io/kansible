@@ -12,12 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build test
+
 package manager
 
 import (
 	"github.com/google/cadvisor/events"
 	info "github.com/google/cadvisor/info/v1"
 	"github.com/google/cadvisor/info/v2"
+
 	"github.com/stretchr/testify/mock"
 )
 

@@ -27,18 +27,12 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/testapi"
-	"k8s.io/kubernetes/pkg/apiserver"
+	"k8s.io/kubernetes/pkg/client/restclient"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/master"
-	"k8s.io/kubernetes/plugin/pkg/admission/admit"
 	"k8s.io/kubernetes/test/integration/framework"
 )
 
-func deletePodOrErrorf(t *testing.T, c *client.Client, ns, name string) {
-	if err := c.Pods(ns).Delete(name, nil); err != nil {
-		t.Errorf("unable to delete pod %v: %v", name, err)
-	}
-}
 func deleteSecretOrErrorf(t *testing.T, c *client.Client, ns, name string) {
 	if err := c.Secrets(ns).Delete(name); err != nil {
 		t.Errorf("unable to delete secret %v: %v", name, err)
@@ -47,49 +41,26 @@ func deleteSecretOrErrorf(t *testing.T, c *client.Client, ns, name string) {
 
 // TestSecrets tests apiserver-side behavior of creation of secret objects and their use by pods.
 func TestSecrets(t *testing.T) {
-	etcdStorage, err := framework.NewEtcdStorage()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	expEtcdStorage, err := framework.NewExtensionsEtcdStorage(nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	storageDestinations := master.NewStorageDestinations()
-	storageDestinations.AddAPIGroup("", etcdStorage)
-	storageDestinations.AddAPIGroup("extensions", expEtcdStorage)
-
-	storageVersions := make(map[string]string)
-	storageVersions[""] = testapi.Default.Version()
-	storageVersions["extensions"] = testapi.Extensions.GroupAndVersion()
-
 	var m *master.Master
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		m.Handler.ServeHTTP(w, req)
 	}))
-	defer s.Close()
+	// TODO: Uncomment when fix #19254
+	// defer s.Close()
 
-	m = master.New(&master.Config{
-		StorageDestinations:   storageDestinations,
-		KubeletClient:         client.FakeKubeletClient{},
-		EnableCoreControllers: true,
-		EnableLogsSupport:     false,
-		EnableUISupport:       false,
-		EnableIndex:           true,
-		APIPrefix:             "/api",
-		Authorizer:            apiserver.NewAlwaysAllowAuthorizer(),
-		AdmissionControl:      admit.NewAlwaysAdmit(),
-		StorageVersions:       storageVersions,
-	})
+	masterConfig := framework.NewIntegrationTestMasterConfig()
+	m, err := master.New(masterConfig)
+	if err != nil {
+		t.Fatalf("Error in bringing up the master: %v", err)
+	}
 
 	framework.DeleteAllEtcdKeys()
-	client := client.NewOrDie(&client.Config{Host: s.URL, Version: testapi.Default.Version()})
-	DoTestSecrets(t, client, testapi.Default.Version())
+	client := client.NewOrDie(&restclient.Config{Host: s.URL, ContentConfig: restclient.ContentConfig{GroupVersion: testapi.Default.GroupVersion()}})
+	DoTestSecrets(t, client)
 }
 
 // DoTestSecrets test secrets for one api version.
-func DoTestSecrets(t *testing.T, client *client.Client, apiVersion string) {
+func DoTestSecrets(t *testing.T, client *client.Client) {
 	// Make a secret object.
 	ns := "ns"
 	s := api.Secret{

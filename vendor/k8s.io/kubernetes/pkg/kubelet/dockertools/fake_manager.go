@@ -17,12 +17,15 @@ limitations under the License.
 package dockertools
 
 import (
-	cadvisorApi "github.com/google/cadvisor/info/v1"
+	cadvisorapi "github.com/google/cadvisor/info/v1"
+	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/client/record"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/network"
-	"k8s.io/kubernetes/pkg/kubelet/prober"
-	kubeletTypes "k8s.io/kubernetes/pkg/kubelet/types"
+	proberesults "k8s.io/kubernetes/pkg/kubelet/prober/results"
+	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
+	"k8s.io/kubernetes/pkg/types"
+	"k8s.io/kubernetes/pkg/util"
 	"k8s.io/kubernetes/pkg/util/oom"
 	"k8s.io/kubernetes/pkg/util/procfs"
 )
@@ -30,24 +33,37 @@ import (
 func NewFakeDockerManager(
 	client DockerInterface,
 	recorder record.EventRecorder,
-	readinessManager *kubecontainer.ReadinessManager,
+	livenessManager proberesults.Manager,
 	containerRefManager *kubecontainer.RefManager,
-	machineInfo *cadvisorApi.MachineInfo,
+	machineInfo *cadvisorapi.MachineInfo,
 	podInfraContainerImage string,
 	qps float32,
 	burst int,
 	containerLogsDir string,
 	osInterface kubecontainer.OSInterface,
 	networkPlugin network.NetworkPlugin,
-	generator kubecontainer.RunContainerOptionsGenerator,
-	httpClient kubeletTypes.HttpGetter) *DockerManager {
+	runtimeHelper kubecontainer.RuntimeHelper,
+	httpClient kubetypes.HttpGetter, imageBackOff *util.Backoff) *DockerManager {
 
-	fakeOomAdjuster := oom.NewFakeOomAdjuster()
-	fakeProcFs := procfs.NewFakeProcFs()
-	dm := NewDockerManager(client, recorder, readinessManager, containerRefManager, machineInfo, podInfraContainerImage, qps,
-		burst, containerLogsDir, osInterface, networkPlugin, generator, httpClient, &NativeExecHandler{},
-		fakeOomAdjuster, fakeProcFs, false, true)
+	fakeOOMAdjuster := oom.NewFakeOOMAdjuster()
+	fakeProcFs := procfs.NewFakeProcFS()
+	fakePodGetter := &fakePodGetter{}
+	dm := NewDockerManager(client, recorder, livenessManager, containerRefManager, fakePodGetter, machineInfo, podInfraContainerImage, qps,
+		burst, containerLogsDir, osInterface, networkPlugin, runtimeHelper, httpClient, &NativeExecHandler{},
+		fakeOOMAdjuster, fakeProcFs, false, imageBackOff, false, false, true)
 	dm.dockerPuller = &FakeDockerPuller{}
-	dm.prober = prober.New(nil, readinessManager, containerRefManager, recorder)
 	return dm
+}
+
+type fakePodGetter struct {
+	pods map[types.UID]*api.Pod
+}
+
+func newFakePodGetter() *fakePodGetter {
+	return &fakePodGetter{make(map[types.UID]*api.Pod)}
+}
+
+func (f *fakePodGetter) GetPodByUID(uid types.UID) (*api.Pod, bool) {
+	pod, found := f.pods[uid]
+	return pod, found
 }

@@ -16,22 +16,19 @@
 
 # A library of helper functions for CoreOS.
 
-SSH_USER=ubuntu
+SSH_USER=core
 
 function detect-minion-image (){
-  if [[ -z "${KUBE_MINION_IMAGE-}" ]]; then
-    KUBE_MINION_IMAGE=$(curl -s -L http://${COREOS_CHANNEL}.release.core-os.net/amd64-usr/current/coreos_production_ami_all.json | python -c "import json,sys;obj=json.load(sys.stdin);print filter(lambda t: t['name']=='${AWS_REGION}', obj['amis'])[0]['hvm']")
+  if [[ -z "${KUBE_NODE_IMAGE-}" ]]; then
+    KUBE_NODE_IMAGE=$(curl -s -L http://${COREOS_CHANNEL}.release.core-os.net/amd64-usr/current/coreos_production_ami_all.json | python -c "import json,sys;obj=json.load(sys.stdin);print filter(lambda t: t['name']=='${AWS_REGION}', obj['amis'])[0]['hvm']")
   fi
-  if [[ -z "${KUBE_MINION_IMAGE-}" ]]; then
-    echo "unable to determine KUBE_MINION_IMAGE"
+  if [[ -z "${KUBE_NODE_IMAGE-}" ]]; then
+    echo "unable to determine KUBE_NODE_IMAGE"
     exit 2
   fi
 }
 
 function generate-minion-user-data() {
-  i=$1
-  # TODO(bakins): Is this actually used?
-  MINION_PRIVATE_IP=$INTERNAL_IP_BASE.1${i}
 
   # this is a bit of a hack. We make all of our "variables" in
   # our cloud config controlled by env vars from this script
@@ -44,7 +41,6 @@ function generate-minion-user-data() {
       DNS_SERVER_IP=$(yaml-quote ${DNS_SERVER_IP:-})
       DNS_DOMAIN=$(yaml-quote ${DNS_DOMAIN:-})
       MASTER_IP=$(yaml-quote ${MASTER_INTERNAL_IP})
-      MINION_IP=$(yaml-quote ${MINION_PRIVATE_IP})
       KUBELET_TOKEN=$(yaml-quote ${KUBELET_TOKEN:-})
       KUBE_PROXY_TOKEN=$(yaml-quote ${KUBE_PROXY_TOKEN:-})
       KUBE_BEARER_TOKEN=$(yaml-quote ${KUBELET_TOKEN:-})
@@ -57,6 +53,3 @@ function check-minion() {
   echo "working"
 }
 
-function yaml-quote {
-  echo "'$(echo "${@}" | sed -e "s/'/''/g")'"
-}

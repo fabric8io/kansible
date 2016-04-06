@@ -18,6 +18,7 @@ package http
 
 import (
 	"crypto/tls"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -35,7 +36,7 @@ func New() HTTPProber {
 }
 
 type HTTPProber interface {
-	Probe(url *url.URL, timeout time.Duration) (probe.Result, string, error)
+	Probe(url *url.URL, headers http.Header, timeout time.Duration) (probe.Result, string, error)
 }
 
 type httpProber struct {
@@ -43,20 +44,26 @@ type httpProber struct {
 }
 
 // Probe returns a ProbeRunner capable of running an http check.
-func (pr httpProber) Probe(url *url.URL, timeout time.Duration) (probe.Result, string, error) {
-	return DoHTTPProbe(url, &http.Client{Timeout: timeout, Transport: pr.transport})
+func (pr httpProber) Probe(url *url.URL, headers http.Header, timeout time.Duration) (probe.Result, string, error) {
+	return DoHTTPProbe(url, headers, &http.Client{Timeout: timeout, Transport: pr.transport})
 }
 
 type HTTPGetInterface interface {
-	Get(u string) (*http.Response, error)
+	Do(req *http.Request) (*http.Response, error)
 }
 
 // DoHTTPProbe checks if a GET request to the url succeeds.
 // If the HTTP response code is successful (i.e. 400 > code >= 200), it returns Success.
 // If the HTTP response code is unsuccessful or HTTP communication fails, it returns Failure.
 // This is exported because some other packages may want to do direct HTTP probes.
-func DoHTTPProbe(url *url.URL, client HTTPGetInterface) (probe.Result, string, error) {
-	res, err := client.Get(url.String())
+func DoHTTPProbe(url *url.URL, headers http.Header, client HTTPGetInterface) (probe.Result, string, error) {
+	req, err := http.NewRequest("GET", url.String(), nil)
+	if err != nil {
+		// Convert errors into failures to catch timeouts.
+		return probe.Failure, err.Error(), nil
+	}
+	req.Header = headers
+	res, err := client.Do(req)
 	if err != nil {
 		// Convert errors into failures to catch timeouts.
 		return probe.Failure, err.Error(), nil
@@ -71,6 +78,6 @@ func DoHTTPProbe(url *url.URL, client HTTPGetInterface) (probe.Result, string, e
 		glog.V(4).Infof("Probe succeeded for %s, Response: %v", url.String(), *res)
 		return probe.Success, body, nil
 	}
-	glog.V(4).Infof("Probe failed for %s, Response: %v", url.String(), *res)
-	return probe.Failure, body, nil
+	glog.V(4).Infof("Probe failed for %s with request headers %v, response body: %v", url.String(), headers, body)
+	return probe.Failure, fmt.Sprintf("HTTP probe failed with statuscode: %d", res.StatusCode), nil
 }

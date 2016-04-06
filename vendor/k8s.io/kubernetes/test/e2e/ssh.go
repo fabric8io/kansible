@@ -20,28 +20,22 @@ import (
 	"fmt"
 	"strings"
 
-	client "k8s.io/kubernetes/pkg/client/unversioned"
-
 	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("SSH", func() {
-	var c *client.Client
+
+	f := NewDefaultFramework("ssh")
 
 	BeforeEach(func() {
-		var err error
-		c, err = loadClient()
-		Expect(err).NotTo(HaveOccurred())
-
 		// When adding more providers here, also implement their functionality in util.go's getSigner(...).
-		SkipUnlessProviderIs("gce", "gke")
+		SkipUnlessProviderIs(providersWithSSH...)
 	})
 
 	It("should SSH to all nodes and run commands", func() {
 		// Get all nodes' external IPs.
 		By("Getting all nodes' SSH-able IP addresses")
-		hosts, err := NodeSSHHosts(c)
+		hosts, err := NodeSSHHosts(f.Client)
 		if err != nil {
 			Failf("Error getting node hostnames: %v", err)
 		}
@@ -65,8 +59,8 @@ var _ = Describe("SSH", func() {
 		for _, testCase := range testCases {
 			By(fmt.Sprintf("SSH'ing to all nodes and running %s", testCase.cmd))
 			for _, host := range hosts {
-				stdout, stderr, code, err := SSH(testCase.cmd, host, testContext.Provider)
-				stdout, stderr = strings.TrimSpace(stdout), strings.TrimSpace(stderr)
+				result, err := SSH(testCase.cmd, host, testContext.Provider)
+				stdout, stderr := strings.TrimSpace(result.Stdout), strings.TrimSpace(result.Stderr)
 				if err != testCase.expectedError {
 					Failf("Ran %s on %s, got error %v, expected %v", testCase.cmd, host, err, testCase.expectedError)
 				}
@@ -76,8 +70,8 @@ var _ = Describe("SSH", func() {
 				if stderr != testCase.expectedStderr {
 					Failf("Ran %s on %s, got stderr '%s', expected '%s'", testCase.cmd, host, stderr, testCase.expectedStderr)
 				}
-				if code != testCase.expectedCode {
-					Failf("Ran %s on %s, got exit code %d, expected %d", testCase.cmd, host, code, testCase.expectedCode)
+				if result.Code != testCase.expectedCode {
+					Failf("Ran %s on %s, got exit code %d, expected %d", testCase.cmd, host, result.Code, testCase.expectedCode)
 				}
 				// Show stdout, stderr for logging purposes.
 				if len(stdout) > 0 {
@@ -91,7 +85,7 @@ var _ = Describe("SSH", func() {
 
 		// Quickly test that SSH itself errors correctly.
 		By("SSH'ing to a nonexistent host")
-		if _, _, _, err = SSH(`echo "hello"`, "i.do.not.exist", testContext.Provider); err == nil {
+		if _, err = SSH(`echo "hello"`, "i.do.not.exist", testContext.Provider); err == nil {
 			Failf("Expected error trying to SSH to nonexistent host.")
 		}
 	})

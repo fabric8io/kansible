@@ -1,3 +1,17 @@
+# Copyright 2016 The Kubernetes Authors All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 FROM google/debian:wheezy
 
 COPY cassandra.list /etc/apt/sources.list.d/cassandra.list
@@ -19,7 +33,7 @@ COPY logback.xml /etc/cassandra/logback.xml
 COPY run.sh /run.sh
 COPY kubernetes-cassandra.jar /kubernetes-cassandra.jar
 
-RUN chmod a+x /run.sh && \
+RUN chmod a+rx /run.sh && \
     mkdir -p /cassandra_data/data && \
     chown -R cassandra.cassandra /etc/cassandra /cassandra_data && \
     chmod o+w -R /etc/cassandra /cassandra_data

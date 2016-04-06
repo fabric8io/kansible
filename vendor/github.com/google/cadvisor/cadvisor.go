@@ -18,25 +18,28 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
-	_ "net/http/pprof"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
-	"github.com/golang/glog"
-	cadvisorHttp "github.com/google/cadvisor/http"
+	"github.com/google/cadvisor/container"
+	cadvisorhttp "github.com/google/cadvisor/http"
 	"github.com/google/cadvisor/manager"
 	"github.com/google/cadvisor/utils/sysfs"
 	"github.com/google/cadvisor/version"
+
+	"github.com/golang/glog"
 )
 
 var argIp = flag.String("listen_ip", "", "IP to listen on, defaults to all IPs")
 var argPort = flag.Int("port", 8080, "port to listen")
 var maxProcs = flag.Int("max_procs", 0, "max number of CPUs that can be used simultaneously. Less than 1 for default (number of cores).")
 
-var argDbDriver = flag.String("storage_driver", "", "storage driver to use. Data is always cached shortly in memory, this controls where data is pushed besides the local cache. Empty means none. Options are: <empty> (default), bigquery, and influxdb")
+var argDbDriver = flag.String("storage_driver", "", "storage driver to use. Data is always cached shortly in memory, this controls where data is pushed besides the local cache. Empty means none. Options are: <empty> (default), bigquery, influxdb, and kafka")
 var versionFlag = flag.Bool("version", false, "print cAdvisor version and exit")
 
 var httpAuthFile = flag.String("http_auth_file", "", "HTTP auth file for the web UI")
@@ -48,6 +51,43 @@ var prometheusEndpoint = flag.String("prometheus_endpoint", "/metrics", "Endpoin
 
 var maxHousekeepingInterval = flag.Duration("max_housekeeping_interval", 60*time.Second, "Largest interval to allow between container housekeepings")
 var allowDynamicHousekeeping = flag.Bool("allow_dynamic_housekeeping", true, "Whether to allow the housekeeping interval to be dynamic")
+
+var enableProfiling = flag.Bool("profiling", false, "Enable profiling via web interface host:port/debug/pprof/")
+
+var (
+	// Metrics to be ignored.
+	// Tcp metrics are ignored by default.
+	ignoreMetrics metricSetValue = metricSetValue{container.MetricSet{container.NetworkTcpUsageMetrics: struct{}{}}}
+	// List of metrics that can be ignored.
+	ignoreWhitelist = container.MetricSet{
+		container.DiskUsageMetrics:       struct{}{},
+		container.NetworkUsageMetrics:    struct{}{},
+		container.NetworkTcpUsageMetrics: struct{}{},
+	}
+)
+
+type metricSetValue struct {
+	container.MetricSet
+}
+
+func (ml *metricSetValue) String() string {
+	return fmt.Sprint(*ml)
+}
+
+func (ml *metricSetValue) Set(value string) error {
+	for _, metric := range strings.Split(value, ",") {
+		if ignoreWhitelist.Has(container.MetricKind(metric)) {
+			(*ml).Add(container.MetricKind(metric))
+		} else {
+			return fmt.Errorf("unsupported metric %q specified in disable_metrics", metric)
+		}
+	}
+	return nil
+}
+
+func init() {
+	flag.Var(&ignoreMetrics, "disable_metrics", "comma-separated list of metrics to be disabled. Options are `disk`, `network`, `tcp`. Note: tcp is disabled by default due to high CPU usage.")
+}
 
 func main() {
 	defer glog.Flush()
@@ -70,20 +110,27 @@ func main() {
 		glog.Fatalf("Failed to create a system interface: %s", err)
 	}
 
-	containerManager, err := manager.New(memoryStorage, sysFs, *maxHousekeepingInterval, *allowDynamicHousekeeping)
+	containerManager, err := manager.New(memoryStorage, sysFs, *maxHousekeepingInterval, *allowDynamicHousekeeping, ignoreMetrics.MetricSet)
 	if err != nil {
 		glog.Fatalf("Failed to create a Container Manager: %s", err)
 	}
 
-	mux := http.DefaultServeMux
+	mux := http.NewServeMux()
+
+	if *enableProfiling {
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	}
 
 	// Register all HTTP handlers.
-	err = cadvisorHttp.RegisterHandlers(mux, containerManager, *httpAuthFile, *httpAuthRealm, *httpDigestFile, *httpDigestRealm)
+	err = cadvisorhttp.RegisterHandlers(mux, containerManager, *httpAuthFile, *httpAuthRealm, *httpDigestFile, *httpDigestRealm)
 	if err != nil {
 		glog.Fatalf("Failed to register HTTP handlers: %v", err)
 	}
 
-	cadvisorHttp.RegisterPrometheusHandler(mux, containerManager, *prometheusEndpoint, nil)
+	cadvisorhttp.RegisterPrometheusHandler(mux, containerManager, *prometheusEndpoint, nil)
 
 	// Start the manager.
 	if err := containerManager.Start(); err != nil {
@@ -96,7 +143,7 @@ func main() {
 	glog.Infof("Starting cAdvisor version: %s-%s on port %d", version.Info["version"], version.Info["revision"], *argPort)
 
 	addr := fmt.Sprintf("%s:%d", *argIp, *argPort)
-	glog.Fatal(http.ListenAndServe(addr, nil))
+	glog.Fatal(http.ListenAndServe(addr, mux))
 }
 
 func setMaxProcs() {

@@ -21,6 +21,8 @@ set -e
 KUBE_ROOT=$(dirname "${BASH_SOURCE}")/../..
 source "config-default.sh"
 KUBECTL="${KUBE_ROOT}/cluster/kubectl.sh"
+export KUBECTL_PATH="${KUBE_ROOT}/cluster/ubuntu/binaries/kubectl"
+export KUBE_CONFIG_FILE=${KUBE_CONFIG_FILE:-${KUBE_ROOT}/cluster/ubuntu/config-default.sh}
 
 function init {
   echo "Creating kube-system namespace..."
@@ -57,22 +59,20 @@ function deploy_dns {
   echo
 }
 
-function deploy_ui {
-  echo "Deploying Kubernetes UI..."
+function deploy_dashboard {
+    if ${KUBECTL} get rc -l k8s-app=kubernetes-dashboard --namespace=kube-system | grep kubernetes-dashboard-v &> /dev/null; then
+        echo "Kubernetes Dashboard replicationController already exists"
+    else
+        echo "Creating Kubernetes Dashboard replicationController"
+        ${KUBECTL} create -f ${KUBE_ROOT}/cluster/addons/dashboard/dashboard-controller.yaml
+    fi
 
-  KUBEUI=`eval "${KUBECTL} get services --namespace=kube-system | grep kube-ui | cat"`
-
-  if [ ! "$KUBEUI" ]; then
-    # use kubectl to create kube-ui rc and service
-    ${KUBECTL} --namespace=kube-system create \
-        -f ${KUBE_ROOT}/cluster/addons/kube-ui/kube-ui-rc.yaml
-    ${KUBECTL} --namespace=kube-system create \
-        -f ${KUBE_ROOT}/cluster/addons/kube-ui/kube-ui-svc.yaml
-
-    echo "Kube-ui rc and service is successfully deployed."
-  else
-    echo "Kube-ui rc and service is already deployed. Skipping."
-  fi
+    if ${KUBECTL} get service/kubernetes-dashboard --namespace=kube-system &> /dev/null; then
+        echo "Kubernetes Dashboard service already exists"
+    else
+        echo "Creating Kubernetes Dashboard service"
+        ${KUBECTL} create -f ${KUBE_ROOT}/cluster/addons/dashboard/dashboard-service.yaml
+    fi
 
   echo
 }
@@ -84,6 +84,6 @@ if [ "${ENABLE_CLUSTER_DNS}" == true ]; then
 fi
 
 if [ "${ENABLE_CLUSTER_UI}" == true ]; then
-  deploy_ui
+  deploy_dashboard
 fi
 

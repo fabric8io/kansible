@@ -3,11 +3,31 @@
 
 <!-- END MUNGE: UNVERSIONED_WARNING -->
 
-# Kubernetes Examples: releases.k8s.io/release-1.1
+# Kubernetes Examples: releases.k8s.io/release-1.2
 
-This directory contains a number of different examples of how to run
-applications with Kubernetes.
+This directory contains a number of examples of how to run
+real applications with Kubernetes.
 
+Demonstrations of how to use specific Kubernetes features can be found in our [documents](../docs/).
+
+
+### Maintained Examples
+
+Maintained Examples are expected to be updated with every Kubernetes
+release, to use the latest and greatest features, current guidelines
+and best practices, and to refresh command syntax, output, changed
+prerequisites, as needed.
+
+Name | Description | Notable Features Used | Complexity Level
+------------- | ------------- | ------------ | ------------ | ------------
+[Guestbook](guestbook/) | PHP app with Redis | Replication Controller, Service | Beginner
+[WordPress](mysql-wordpress-pd/) | WordPress with MySQL | Deployment, Persistent Volume with Claim | Beginner
+[Cassandra](cassandra/) | Cloud Native Cassandra | Daemon Set | Intermediate
+
+Note: Please add examples to the list above that are maintained.
+
+See [Example Guidelines](guidelines.md) for a description of what goes
+in this directory, and what examples should contain.
 
 
 

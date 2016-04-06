@@ -2,6 +2,14 @@
   "swaggerVersion": "1.2",
   "apis": [
    {
+    "path": "/apis",
+    "description": "get available API versions"
+   },
+   {
+    "path": "/version",
+    "description": "git code version from which this is built"
+   },
+   {
     "path": "/api/v1",
     "description": "API at /api/v1"
    },
@@ -18,12 +26,20 @@
     "description": "get information of a group"
    },
    {
-    "path": "/apis",
-    "description": "get available API versions"
+    "path": "/apis/autoscaling/v1",
+    "description": "API at /apis/autoscaling/v1"
    },
    {
-    "path": "/version",
-    "description": "git code version from which this is built"
+    "path": "/apis/autoscaling",
+    "description": "get information of a group"
+   },
+   {
+    "path": "/apis/batch/v1",
+    "description": "API at /apis/batch/v1"
+   },
+   {
+    "path": "/apis/batch",
+    "description": "get information of a group"
    }
   ],
   "apiVersion": "",
