@@ -2,6 +2,7 @@ package: github.com/fabric8io/gosupervise
 import:
 - package: github.com/Masterminds/vcs
 - package: github.com/Masterminds/semver
+  version: ^1.0.0
 - package: k8s.io/kubernetes
   version: v1.2.1
   subpackages:
