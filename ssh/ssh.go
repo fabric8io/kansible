@@ -22,9 +22,11 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"os/signal"
 
 	"github.com/fabric8io/kansible/log"
 	"golang.org/x/crypto/ssh"
+	"syscall"
 )
 
 // RemoteSSHCommand invokes the given command on a host and port
@@ -32,7 +34,7 @@ func RemoteSSHCommand(user string, privateKey string, host string, port string, 
 	if len(privateKey) == 0 {
 		return fmt.Errorf("Could not find PrivateKey for entry %s", host)
 	}
-	log.Info("Connecting to host over SSH on host %s and port %d with user %s with command `%s`", host, port, user, cmd)
+	log.Info("Connecting to host over SSH on host %s and port %s with user %s with command `%s`", host, port, user, cmd)
 
 	hostPort := net.JoinHostPort(host, port)
 
@@ -90,10 +92,20 @@ func RemoteSSHCommand(user string, privateKey string, host string, port string, 
 		}
 	}
 
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	signaled := false
+	go func() {
+		<-signals
+		log.Info("Shutting down SSH session.")
+		signaled = true
+		session.Close()
+	}()
+
 	log.Info("Running command %s", cmd)
 	err = session.Run(cmd)
-	if err != nil {
-		return fmt.Errorf("Failed to run command: "+cmd+": %v", err)
+	if !signaled && err != nil {
+		return fmt.Errorf("Failed to run command: " + cmd + ": %v", err)
 	}
 	return nil
 }
