@@ -54,6 +54,12 @@ const (
 	// HostAddressAnnotation is used to annotate a pod with the host address its processing
 	HostAddressAnnotation = "kansible.fabric8.io/host-address"
 
+	// IconAnnotation is the annotation used to denote the icon on an RC or Service
+	IconAnnotation = "fabric8.io/iconUrl"
+
+	// IconURL is the kansible icon URL
+	IconURL = "https://cdn.rawgit.com/fabric8io/kansible/master/docs/images/logo.png"
+
 	// WinRMShellAnnotationPrefix stores the shell ID for the WinRM host name on the RC
 	WinRMShellAnnotationPrefix = "winrm.shellid.kansible.fabric8.io/"
 
@@ -496,6 +502,7 @@ func UpdateKansibleRC(hostEntries []*HostEntry, hosts string, f *cmdutil.Factory
 		metadata.Annotations = make(map[string]string)
 	}
 	metadata.Annotations[HostInventoryAnnotation] = text
+	metadata.Annotations[IconAnnotation] = IconURL
 
 	log.Info("found RC with name %s and version %s and replicas %d", rcName, resourceVersion, rcSpec.Replicas)
 
